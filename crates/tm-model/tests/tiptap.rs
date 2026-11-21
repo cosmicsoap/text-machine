@@ -34,6 +34,8 @@ fn normalise(value: &mut serde_json::Value) {
             map.retain(|k, v| !(k == "attrs" && v.as_object().is_some_and(|o| o.is_empty())));
         }
         Value::Array(items) => items.iter_mut().for_each(normalise),
+        // 320 et 320.0 sont le même nombre.
+        Value::Number(n) => *value = serde_json::json!(n.as_f64()),
         _ => {}
     }
 }
@@ -42,6 +44,18 @@ fn normalise(value: &mut serde_json::Value) {
 fn garde_toute_la_mise_en_forme() {
     let json = include_str!("fixtures/tiptap-formatting.json");
     let doc = Document::from_json(json).expect("JSON TipTap lisible");
+    let mut back: serde_json::Value = serde_json::from_str(&doc.to_json().unwrap()).unwrap();
+    let mut original: serde_json::Value = serde_json::from_str(json).unwrap();
+    normalise(&mut back);
+    normalise(&mut original);
+    assert_eq!(back, original);
+}
+
+#[test]
+fn garde_tableaux_et_images() {
+    let json = include_str!("fixtures/tiptap-table-image.json");
+    let doc = Document::from_json(json).expect("JSON TipTap lisible");
+    assert_eq!(doc.word_count(), 5);
     let mut back: serde_json::Value = serde_json::from_str(&doc.to_json().unwrap()).unwrap();
     let mut original: serde_json::Value = serde_json::from_str(json).unwrap();
     normalise(&mut back);

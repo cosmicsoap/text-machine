@@ -10,6 +10,9 @@ import Highlight from "@tiptap/extension-highlight";
 import Subscript from "@tiptap/extension-subscript";
 import Superscript from "@tiptap/extension-superscript";
 import { TaskList, TaskItem } from "@tiptap/extension-list";
+import { TableKit } from "@tiptap/extension-table";
+import Image from "@tiptap/extension-image";
+import FileHandler from "@tiptap/extension-file-handler";
 import { ParagraphFormat } from "./extensions/paragraph-format";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -35,6 +38,17 @@ const editor = new Editor({
     TaskList,
     TaskItem.configure({ nested: true }),
     ParagraphFormat,
+    TableKit.configure({ table: { resizable: true } }),
+    Image.configure({
+      allowBase64: true,
+      resize: { enabled: true, alwaysPreserveAspectRatio: true, minWidth: 40, minHeight: 40 },
+    }),
+    // Images collées (⌘V) ou glissées dans la page.
+    FileHandler.configure({
+      allowedMimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"],
+      onPaste: (ed, files) => files.forEach((f) => insertImageFile(f, ed.state.selection.from)),
+      onDrop: (_ed, files, pos) => files.forEach((f) => insertImageFile(f, pos)),
+    }),
   ],
   content: "<h1>Bienvenue dans Text Machine</h1><p>Commencez à écrire ici.</p>",
   autofocus: "end",
@@ -42,6 +56,20 @@ const editor = new Editor({
   onSelectionUpdate: () => refreshToolbar(),
   onTransaction: () => refreshToolbar(),
 });
+
+// --- Images ----------------------------------------------------------------
+
+/** Les images sont gardées dans le document (adresse `data:` en base64). */
+function insertImageFile(file: File, pos?: number) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const image = { type: "image", attrs: { src: String(reader.result), alt: file.name } };
+    const chain = editor.chain().focus();
+    if (pos === undefined) chain.insertContent(image).run();
+    else chain.insertContentAt(pos, image).run();
+  };
+  reader.readAsDataURL(file);
+}
 
 // --- Nombre de mots, calculé par le cœur Rust -------------------------------
 
@@ -131,7 +159,25 @@ const actions: Record<string, () => unknown> = {
   orderedList: () => chain().toggleOrderedList().run(),
   taskList: () => chain().toggleTaskList().run(),
   blockquote: () => chain().toggleBlockquote().run(),
+  image: () => imageInput.click(),
+  table: () => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+  rowBefore: () => chain().addRowBefore().run(),
+  rowAfter: () => chain().addRowAfter().run(),
+  colBefore: () => chain().addColumnBefore().run(),
+  colAfter: () => chain().addColumnAfter().run(),
+  deleteRow: () => chain().deleteRow().run(),
+  deleteCol: () => chain().deleteColumn().run(),
+  toggleHeaderRow: () => chain().toggleHeaderRow().run(),
+  deleteTable: () => chain().deleteTable().run(),
 };
+
+const imageInput = $<HTMLInputElement>("#image-file");
+const tableTools = $<HTMLElement>("#table-tools");
+imageInput.addEventListener("change", () => {
+  const file = imageInput.files?.[0];
+  if (file) insertImageFile(file);
+  imageInput.value = "";
+});
 
 // Les boutons ne prennent pas le focus : le curseur reste dans le texte.
 toolbar.addEventListener("mousedown", (event) => {
@@ -228,6 +274,8 @@ function refreshToolbar() {
       .querySelector(`[data-action="${name}"]`)
       ?.classList.toggle("active", editor.isActive({ textAlign: align }));
   }
+  tableTools.hidden = !editor.isActive("table");
+
   const level = [1, 2, 3, 4].find((l) => editor.isActive("heading", { level: l }));
   blockSelect.value = level ? String(level) : "p";
 

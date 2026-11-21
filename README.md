@@ -7,7 +7,8 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 
 > **État :** MVP en construction. On peut écrire, mettre en forme
 > (police, taille, couleurs, surlignage, liens, alignement, interligne,
-> retraits, titres, listes et cases à cocher), enregistrer et rouvrir un
+> retraits, titres, listes et cases à cocher), insérer des tableaux et des
+> images (depuis un fichier ou en les collant), enregistrer et rouvrir un
 > document. La pagination, l'export PDF/Word, le correcteur, etc. arrivent.
 
 ## Comment c'est construit
