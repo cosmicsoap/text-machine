@@ -26,7 +26,7 @@ import {
 import { Search, getSearchState } from "./extensions/search";
 import { ParagraphFormat } from "./extensions/paragraph-format";
 import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { ask, open, save } from "@tauri-apps/plugin-dialog";
 
 const FILTERS = [{ name: "Document Text Machine", extensions: ["tmd"] }];
 
@@ -75,6 +75,7 @@ const editor = new Editor({
   // Correcteur orthographique du système (macOS), en français.
   editorProps: { attributes: { spellcheck: "true", lang: "fr" } },
   onUpdate: () => {
+    markDirty();
     scheduleWordCount();
     scheduleOutline();
   },
@@ -232,6 +233,7 @@ function drawSheets(pages: number) {
 
 function setPageSetup(setup: PageSetup) {
   pageSetup = setup;
+  markDirty();
   applyPageSetup();
   refreshPagination(editor.view);
 }
@@ -268,42 +270,215 @@ async function updateWordCount() {
 
 // --- Fichiers ---------------------------------------------------------------
 
+interface NativeFile {
+  document: JSONContent;
+  page: PageSetup;
+}
+
+interface Session {
+  recent: string[];
+  lastFile: string | null;
+}
+
+/** Modifications pas encore écrites sur le disque. */
+let dirty = false;
+/** Vrai pendant le chargement d'un document (ce n'est pas une modification). */
+let loading = false;
+let autosaveTimer: number | undefined;
+const AUTOSAVE_DELAY_MS = 1500;
+const fileName = (path: string) => path.split(/[\\/]/).pop()!;
+
 function setPath(path: string | null) {
   currentPath = path;
-  const name = path ? path.split(/[\\/]/).pop()! : "Sans titre";
+  const name = path ? fileName(path) : "Sans titre";
   document.querySelector("#file-name")!.textContent = name;
   document.title = `${name} — Text Machine`;
 }
 
-async function openFile() {
-  const path = await open({ multiple: false, filters: FILTERS });
-  if (typeof path !== "string") return;
+function setSaveStatus(text: string) {
+  document.querySelector("#save-status")!.textContent = text;
+}
+
+/** Appelé à chaque modification du document ou de la mise en page. */
+function markDirty() {
+  if (loading) return;
+  dirty = true;
+  setSaveStatus("Modifications non enregistrées");
+  window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(autosave, AUTOSAVE_DELAY_MS);
+}
+
+/**
+ * Enregistrement automatique : dans le fichier s'il a un nom, sinon dans un
+ * brouillon que l'application rouvre au prochain lancement.
+ */
+async function autosave() {
+  if (!dirty) return;
   try {
-    const file = await invoke<{ document: JSONContent; page: PageSetup }>("open_document", {
-      path,
-    });
-    editor.commands.setContent(file.document);
-    setPageSetup(file.page);
-    setPath(path);
-    updateWordCount();
+    if (currentPath) {
+      await writeFile(currentPath);
+    } else {
+      await invoke("save_draft", { doc: editor.getJSON(), page: pageSetup });
+      dirty = false;
+      setSaveStatus("Brouillon enregistré");
+    }
+  } catch (e) {
+    setSaveStatus(`Échec de l'enregistrement : ${e}`);
+  }
+}
+
+async function writeFile(path: string) {
+  setSaveStatus("Enregistrement…");
+  await invoke("save_document", { path, doc: editor.getJSON(), page: pageSetup });
+  dirty = false;
+  setPath(path);
+  setSaveStatus("Enregistré");
+  refreshRecent();
+}
+
+function loadFile(file: NativeFile, path: string | null) {
+  loading = true;
+  editor.commands.setContent(file.document);
+  setPageSetup(file.page);
+  loading = false;
+  dirty = false;
+  setPath(path);
+  setSaveStatus(path ? "Enregistré" : "");
+  updateWordCount();
+  scheduleOutline();
+}
+
+async function openPath(path: string) {
+  if (!(await leaveUntitled())) return;
+  try {
+    loadFile(await invoke<NativeFile>("open_document", { path }), path);
+    refreshRecent();
   } catch (e) {
     alert(String(e));
   }
 }
 
+async function openFile() {
+  const path = await open({ multiple: false, filters: FILTERS });
+  if (typeof path === "string") await openPath(path);
+}
+
 async function saveFile() {
-  let path = currentPath;
-  if (!path) {
-    path = await save({ filters: FILTERS, defaultPath: "Sans titre.tmd" });
-    if (!path) return;
-  }
+  if (currentPath) return writeFile(currentPath).catch((e) => alert(String(e)));
+  return saveFileAs();
+}
+
+async function saveFileAs() {
+  const path = await save({
+    filters: FILTERS,
+    defaultPath: currentPath ?? `${suggestedName()}.tmd`,
+  });
+  if (!path) return;
   try {
-    await invoke("save_document", { path, doc: editor.getJSON(), page: pageSetup });
-    setPath(path);
+    await writeFile(path);
   } catch (e) {
     alert(String(e));
   }
 }
+
+/** Nom proposé : le premier titre (ou la première ligne) du document. */
+function suggestedName() {
+  const first = editor.state.doc.firstChild?.textContent.trim() ?? "";
+  return first.replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "Sans titre";
+}
+
+/** Termine un enregistrement automatique en attente avant de changer de document. */
+async function flush() {
+  window.clearTimeout(autosaveTimer);
+  await autosave();
+}
+
+/**
+ * Avant de quitter un document sans titre qui contient du texte, propose de
+ * l'enregistrer (sinon il serait remplacé par le suivant dans le brouillon).
+ * Renvoie `false` si l'utilisateur annule.
+ */
+async function leaveUntitled(): Promise<boolean> {
+  await flush();
+  if (currentPath || !editor.getText().trim()) return true;
+  const keep = await ask("Ce document n'a pas encore de nom. Voulez-vous l'enregistrer ?", {
+    title: "Text Machine",
+    kind: "warning",
+    okLabel: "Enregistrer…",
+    cancelLabel: "Ne pas enregistrer",
+  });
+  if (!keep) return true;
+  await saveFileAs();
+  return currentPath !== null;
+}
+
+async function newFile() {
+  if (!(await leaveUntitled())) return;
+  const empty: NativeFile = {
+    document: { type: "doc", content: [{ type: "paragraph" }] },
+    page: structuredClone(DEFAULT_PAGE_SETUP),
+  };
+  loadFile(empty, null);
+  await invoke("forget_last_file").catch(() => {});
+  await invoke("save_draft", { doc: empty.document, page: empty.page }).catch(() => {});
+  editor.commands.focus();
+}
+
+// Fichiers récents : un petit menu sous le bouton.
+const recentMenu = document.querySelector<HTMLElement>("#recent-menu")!;
+
+async function refreshRecent() {
+  const session = await invoke<Session>("load_session").catch(() => null);
+  const items = (session?.recent ?? []).map((path) => {
+    const button = document.createElement("button");
+    button.textContent = fileName(path);
+    button.title = path;
+    button.addEventListener("click", () => {
+      recentMenu.hidden = true;
+      openPath(path);
+    });
+    return button;
+  });
+  if (!items.length) {
+    const empty = document.createElement("span");
+    empty.className = "empty";
+    empty.textContent = "Aucun fichier récent";
+    items.push(empty as HTMLButtonElement);
+  }
+  recentMenu.replaceChildren(...items);
+}
+
+function toggleRecent() {
+  recentMenu.hidden = !recentMenu.hidden;
+  if (!recentMenu.hidden) refreshRecent();
+}
+
+document.addEventListener("mousedown", (event) => {
+  const target = event.target as HTMLElement;
+  if (!recentMenu.hidden && !target.closest("#recent-menu, [data-action=recent]")) {
+    recentMenu.hidden = true;
+  }
+});
+
+/** Au lancement : on rouvre le dernier fichier, ou le brouillon. */
+async function restoreSession() {
+  try {
+    const session = await invoke<Session>("load_session");
+    if (session.lastFile) return await openPath(session.lastFile);
+    const draft = await invoke<NativeFile | null>("load_draft");
+    if (draft) loadFile(draft, null);
+  } catch {
+    // Pas de session (premier lancement) : on garde le document d'accueil.
+  }
+}
+
+// Fermeture de la fenêtre : on enregistre ce qui ne l'est pas encore.
+window.addEventListener("beforeunload", () => {
+  if (dirty) autosave();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flush();
+});
 
 // --- Barre d'outils ---------------------------------------------------------
 
@@ -321,7 +496,9 @@ const linkUrl = $<HTMLInputElement>("#link-url");
 const chain = () => editor.chain().focus();
 
 const actions: Record<string, () => unknown> = {
+  new: newFile,
   open: openFile,
+  recent: toggleRecent,
   save: saveFile,
   undo: () => chain().undo().run(),
   redo: () => chain().redo().run(),
@@ -514,9 +691,13 @@ function refreshToolbar() {
 
 window.addEventListener("keydown", (event) => {
   if (!(event.metaKey || event.ctrlKey)) return;
-  if (event.key === "s") {
+  if (event.key.toLowerCase() === "s") {
     event.preventDefault();
-    saveFile();
+    if (event.shiftKey) saveFileAs();
+    else saveFile();
+  } else if (event.key === "n") {
+    event.preventDefault();
+    newFile();
   } else if (event.key === "o") {
     event.preventDefault();
     openFile();
@@ -538,6 +719,7 @@ window.addEventListener("keydown", (event) => {
 refreshToolbar();
 toolbar.querySelector('[data-action="spellcheck"]')?.classList.add("active");
 updateWordCount();
+restoreSession();
 
 // En développement, l'éditeur est accessible depuis la console (`editor`).
 if (import.meta.env.DEV) (window as unknown as { editor: Editor }).editor = editor;

@@ -12,7 +12,8 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > document. Les pages s'affichent comme sur papier (A4 ou Lettre US,
 > marges, sauts de page, numéros de page). Plan du document,
 > rechercher/remplacer (⌘F) et correcteur orthographique du Mac.
-> L'export PDF/Word, l'enregistrement automatique, etc. arrivent.
+> Enregistrement automatique, fichiers récents, et l'application rouvre
+> le dernier document au lancement. L'export PDF/Word arrive.
 
 ## Comment c'est construit
 
