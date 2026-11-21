@@ -1,0 +1,10 @@
+[package]
+name = "tm-ops"
+description = "Opérations sur le document et historique annuler / rétablir."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tm-model.workspace = true
+thiserror.workspace = true

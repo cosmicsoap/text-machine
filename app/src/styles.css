@@ -1,0 +1,106 @@
+:root {
+  --desk: #eef0f3;
+  --page: #ffffff;
+  --ink: #1f2328;
+  --muted: #5f6670;
+  --line: #d6d9de;
+  --accent: #dbe7fb;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--desk);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--page);
+  border-bottom: 1px solid var(--line);
+}
+
+.toolbar button,
+.toolbar select {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  background: var(--desk);
+}
+
+.toolbar button.active {
+  background: var(--accent);
+}
+
+.toolbar select {
+  border-color: var(--line);
+}
+
+.sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background: var(--line);
+}
+
+.desk {
+  flex: 1;
+  overflow: auto;
+  padding: 32px 16px;
+}
+
+/* Une « page » A4 visuelle ; la vraie pagination viendra plus tard. */
+.page {
+  max-width: 21cm;
+  min-height: 29.7cm;
+  margin: 0 auto;
+  padding: 2.5cm;
+  background: var(--page);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
+}
+
+.page .tiptap {
+  outline: none;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12pt;
+  line-height: 1.5;
+}
+
+.page .tiptap blockquote {
+  margin-left: 0;
+  padding-left: 1em;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--page);
+  border-top: 1px solid var(--line);
+}

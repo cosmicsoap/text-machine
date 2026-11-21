@@ -1,0 +1,22 @@
+[package]
+name = "text-machine"
+description = "Text Machine : un traitement de texte local."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+# Nom distinct du binaire, nécessaire pour Tauri.
+name = "text_machine_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "2.8"
+serde.workspace = true
+serde_json.workspace = true
+tm-model.workspace = true
+tm-io-native.workspace = true
