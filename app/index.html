@@ -15,6 +15,15 @@
         <div class="menu" id="recent-menu" hidden></div>
       </span>
       <button data-action="save" title="Enregistrer (⌘S) — Enregistrer sous : ⇧⌘S">Enregistrer</button>
+      <span class="menu-anchor">
+        <button data-action="export" title="Exporter dans un autre format">Exporter ▾</button>
+        <div class="menu" id="export-menu" hidden>
+          <button data-export="print">PDF / Imprimer…</button>
+          <button data-export="md">Markdown (.md)</button>
+          <button data-export="txt">Texte brut (.txt)</button>
+        </div>
+      </span>
+      <button data-action="import" title="Importer un fichier Markdown ou texte">Importer…</button>
       <span class="sep"></span>
       <button data-action="undo" title="Annuler (⌘Z)">↶</button>
       <button data-action="redo" title="Rétablir (⇧⌘Z)">↷</button>

@@ -559,3 +559,55 @@ dialog label.inline {
 #save-status {
   margin-left: 8px;
 }
+
+/* Impression et PDF : seulement les feuilles, sans espace entre elles ;
+   chaque feuille fait exactement une page de papier (voir @page dans
+   main.ts). */
+@media print {
+  html,
+  body {
+    height: auto;
+    background: white;
+  }
+
+  .toolbar,
+  .status,
+  .outline,
+  .find-bar,
+  dialog {
+    display: none !important;
+  }
+
+  .workspace,
+  .desk {
+    display: block;
+    overflow: visible;
+    padding: 0;
+    background: white;
+  }
+
+  .paper {
+    --page-gap: 0px !important;
+    margin: 0;
+  }
+
+  .sheet {
+    box-shadow: none;
+  }
+
+  .search-match {
+    background: none;
+  }
+
+  #editor .tiptap .selectedCell::after,
+  .column-resize-handle {
+    display: none;
+  }
+
+  /* La dernière page ne doit pas en ajouter une vide. */
+  #editor .tiptap {
+    min-height: 0;
+    height: calc(var(--pages, 1) * var(--page-h));
+    overflow: hidden;
+  }
+}
