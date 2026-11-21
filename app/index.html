@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Text Machine</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="toolbar" id="toolbar">
+      <button data-action="open" title="Ouvrir (⌘O)">Ouvrir</button>
+      <button data-action="save" title="Enregistrer (⌘S)">Enregistrer</button>
+      <span class="sep"></span>
+      <button data-action="undo" title="Annuler (⌘Z)">↶</button>
+      <button data-action="redo" title="Rétablir (⇧⌘Z)">↷</button>
+      <span class="sep"></span>
+      <select data-action="block" title="Style de paragraphe">
+        <option value="p">Texte normal</option>
+        <option value="1">Titre 1</option>
+        <option value="2">Titre 2</option>
+        <option value="3">Titre 3</option>
+      </select>
+      <button data-action="bold" title="Gras (⌘B)"><b>G</b></button>
+      <button data-action="italic" title="Italique (⌘I)"><i>I</i></button>
+      <button data-action="underline" title="Souligné (⌘U)"><u>S</u></button>
+      <button data-action="strike" title="Barré"><s>B</s></button>
+      <span class="sep"></span>
+      <button data-action="bulletList" title="Liste à puces">• Liste</button>
+      <button data-action="orderedList" title="Liste numérotée">1. Liste</button>
+      <button data-action="blockquote" title="Citation">❝</button>
+    </header>
+    <main class="desk">
+      <div class="page" id="editor"></div>
+    </main>
+    <footer class="status">
+      <span id="file-name">Sans titre</span>
+      <span id="word-count">0 mot</span>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
