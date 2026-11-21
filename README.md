@@ -38,7 +38,33 @@ text-machine/
 Le plan complet (fonctionnalités prévues, architecture, étapes) est dans le
 document « Text Machine : fonctionnalités et structure du projet ».
 
-## Lancer l'application sur Mac
+## Installer l'application sur Mac (sans rien installer d'autre)
+
+1. Téléchargez **[Text-Machine-mac.dmg](https://github.com/cosmicsoap/text-machine/releases/latest/download/Text-Machine-mac.dmg)**
+   (toujours la dernière version, fabriquée automatiquement par GitHub).
+   Elle marche sur les Mac Apple (M1, M2…) et Intel, macOS 11 ou plus récent.
+2. Ouvrez le fichier `.dmg` et glissez **Text Machine** dans le dossier
+   **Applications**.
+3. **La première fois**, macOS bloque l'application, parce qu'elle n'est pas
+   signée par Apple (il faut un compte développeur payant). Pour l'autoriser :
+   - Double-cliquez sur Text Machine. Un message dit qu'Apple ne peut pas
+     vérifier l'application : cliquez sur **Terminé** (ou **OK**).
+   - Ouvrez **Réglages Système** > **Confidentialité et sécurité**,
+     descendez tout en bas : à côté de « Text Machine a été bloquée »,
+     cliquez sur **Ouvrir quand même**, puis confirmez avec votre mot de passe.
+   - Sur macOS 14 ou plus ancien, plus simple : **clic droit** sur
+     l'application > **Ouvrir** > **Ouvrir**.
+
+   Ensuite, elle s'ouvre normalement, comme n'importe quelle application.
+
+Si macOS dit que l'application « est endommagée », ouvrez le Terminal et
+collez cette commande, puis relancez-la :
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Text Machine.app"
+```
+
+## Lancer l'application sur Mac (pour développer)
 
 ### 1. Installer les outils (une seule fois)
 
