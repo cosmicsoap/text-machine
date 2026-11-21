@@ -1,0 +1,16 @@
+[package]
+name = "tm-io-docx"
+description = "Export Word (.docx) pour Text Machine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tm-model.workspace = true
+docx-rs = "0.4.22"
+base64 = "0.23"
+thiserror.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
