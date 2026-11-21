@@ -1,0 +1,10 @@
+[package]
+name = "tm-io-markdown"
+description = "Import et export Markdown (et texte brut) pour Text Machine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tm-model.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false }

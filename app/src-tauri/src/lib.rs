@@ -70,6 +70,41 @@ fn load_draft(app: AppHandle) -> Option<NativeFile> {
     session::load_draft(&app)
 }
 
+/// Ouvre la fenêtre d'impression du système (sur Mac, elle permet aussi
+/// d'enregistrer en PDF).
+#[tauri::command]
+fn print_document(webview: tauri::Webview) -> Result<(), String> {
+    webview.print().map_err(|e| e.to_string())
+}
+
+/// Exporte en Markdown (`.md`) ou en texte brut (tout autre extension).
+#[tauri::command]
+fn export_document(path: String, doc: Document) -> Result<(), String> {
+    let contents = if is_markdown(&path) {
+        tm_io_markdown::export(&doc)
+    } else {
+        tm_io_markdown::export_plain_text(&doc)
+    };
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
+/// Importe un fichier Markdown ou texte brut.
+#[tauri::command]
+fn import_document(path: String) -> Result<Document, String> {
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(if is_markdown(&path) {
+        tm_io_markdown::import(&text)
+    } else {
+        tm_io_markdown::import_plain_text(&text)
+    })
+}
+
+fn is_markdown(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".md") || lower.ends_with(".markdown")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -81,7 +116,10 @@ pub fn run() {
             load_session,
             forget_last_file,
             save_draft,
-            load_draft
+            load_draft,
+            print_document,
+            export_document,
+            import_document
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de Text Machine");

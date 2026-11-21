@@ -32,7 +32,6 @@ const FILTERS = [{ name: "Document Text Machine", extensions: ["tmd"] }];
 
 let currentPath: string | null = null;
 let pageSetup: PageSetup = structuredClone(DEFAULT_PAGE_SETUP);
-let pageGap = SCREEN_GAP_PX;
 
 const editor = new Editor({
   element: document.querySelector<HTMLElement>("#editor")!,
@@ -55,7 +54,6 @@ const editor = new Editor({
     Search,
     Pagination.configure({
       getSetup: () => pageSetup,
-      getGap: () => pageGap,
       onLayout: (pages) => drawSheets(pages),
     }),
     TableKit.configure({ table: { resizable: true } }),
@@ -192,6 +190,7 @@ findBar.addEventListener("click", (event) => {
 
 const paper = document.querySelector<HTMLElement>("#paper")!;
 const sheets = document.querySelector<HTMLElement>("#sheets")!;
+const printStyle = document.head.appendChild(document.createElement("style"));
 
 /** Applique le format de page : taille de la feuille et marges. */
 function applyPageSetup() {
@@ -199,7 +198,9 @@ function applyPageSetup() {
   const m = pageSetup.margins;
   paper.style.setProperty("--page-w", `${width}px`);
   paper.style.setProperty("--page-h", `${height}px`);
-  paper.style.setProperty("--page-gap", `${pageGap}px`);
+  paper.style.setProperty("--page-gap", `${SCREEN_GAP_PX}px`);
+  // Taille du papier à l'impression (et donc du PDF).
+  printStyle.textContent = `@page { size: ${width}px ${height}px; margin: 0; }`;
   paper.style.setProperty("--m-top", `${mmToPx(m.top)}px`);
   paper.style.setProperty("--m-bottom", `${mmToPx(m.bottom)}px`);
   paper.style.setProperty("--m-left", `${mmToPx(m.left)}px`);
@@ -212,13 +213,12 @@ let lastPages = -1;
 function drawSheets(pages: number) {
   if (pages === lastPages) return;
   lastPages = pages;
-  const { height } = pageSizePx(pageSetup);
   paper.style.setProperty("--pages", String(pages));
   sheets.replaceChildren(
     ...Array.from({ length: pages }, (_, i) => {
       const sheet = document.createElement("div");
       sheet.className = "sheet";
-      sheet.style.top = `${i * (height + pageGap)}px`;
+      sheet.style.top = `calc(${i} * (var(--page-h) + var(--page-gap)))`;
       if (pageSetup.pageNumbers) {
         const number = document.createElement("span");
         number.className = "page-number";
@@ -424,6 +424,58 @@ async function newFile() {
   editor.commands.focus();
 }
 
+// --- Impression, PDF, export et import -------------------------------------
+
+/** Impression du système ; sur Mac, « PDF > Enregistrer au format PDF ». */
+async function printDocument() {
+  try {
+    await invoke("print_document");
+  } catch {
+    window.print();
+  }
+}
+
+const EXPORTS: Record<"md" | "txt", { name: string; extensions: string[] }> = {
+  md: { name: "Markdown", extensions: ["md"] },
+  txt: { name: "Texte brut", extensions: ["txt"] },
+};
+
+async function exportAs(kind: keyof typeof EXPORTS) {
+  const filter = EXPORTS[kind];
+  const path = await save({ filters: [filter], defaultPath: `${suggestedName()}.${filter.extensions[0]}` });
+  if (!path) return;
+  try {
+    await invoke("export_document", { path, doc: editor.getJSON() });
+  } catch (e) {
+    alert(String(e));
+  }
+}
+
+/** Importer un fichier Markdown ou texte : il devient un nouveau document sans titre. */
+async function importFile() {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "Markdown ou texte", extensions: ["md", "markdown", "txt"] }],
+  });
+  if (typeof path !== "string" || !(await leaveUntitled())) return;
+  try {
+    const doc = await invoke<JSONContent>("import_document", { path });
+    loadFile({ document: doc, page: structuredClone(DEFAULT_PAGE_SETUP) }, null);
+    await invoke("forget_last_file").catch(() => {});
+    markDirty();
+  } catch (e) {
+    alert(String(e));
+  }
+}
+
+const exportMenu = document.querySelector<HTMLElement>("#export-menu")!;
+exportMenu.addEventListener("click", (event) => {
+  const kind = (event.target as HTMLElement).closest("button")?.dataset.export;
+  exportMenu.hidden = true;
+  if (kind === "print") printDocument();
+  else if (kind === "md" || kind === "txt") exportAs(kind);
+});
+
 // Fichiers récents : un petit menu sous le bouton.
 const recentMenu = document.querySelector<HTMLElement>("#recent-menu")!;
 
@@ -457,6 +509,9 @@ document.addEventListener("mousedown", (event) => {
   const target = event.target as HTMLElement;
   if (!recentMenu.hidden && !target.closest("#recent-menu, [data-action=recent]")) {
     recentMenu.hidden = true;
+  }
+  if (!exportMenu.hidden && !target.closest("#export-menu, [data-action=export]")) {
+    exportMenu.hidden = true;
   }
 });
 
@@ -499,6 +554,8 @@ const actions: Record<string, () => unknown> = {
   new: newFile,
   open: openFile,
   recent: toggleRecent,
+  export: () => (exportMenu.hidden = !exportMenu.hidden),
+  import: importFile,
   save: saveFile,
   undo: () => chain().undo().run(),
   redo: () => chain().redo().run(),
@@ -695,6 +752,9 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     if (event.shiftKey) saveFileAs();
     else saveFile();
+  } else if (event.key === "p") {
+    event.preventDefault();
+    printDocument();
   } else if (event.key === "n") {
     event.preventDefault();
     newFile();

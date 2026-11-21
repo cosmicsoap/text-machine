@@ -28,7 +28,7 @@ export const DEFAULT_PAGE_SETUP: PageSetup = {
 
 const SIZES_MM = { A4: [210, 297], Letter: [215.9, 279.4] } as const;
 const PX_PER_MM = 96 / 25.4;
-/** Espace gris entre deux feuilles, à l'écran (0 à l'impression). */
+/** Espace gris entre deux feuilles à l'écran (`--page-gap`, 0 à l'impression). */
 export const SCREEN_GAP_PX = 24;
 
 export function pageSizePx(setup: PageSetup) {
@@ -82,7 +82,7 @@ interface Layout {
   pages: number;
 }
 
-function computeLayout(view: EditorView, setup: PageSetup, gap: number): Layout {
+function computeLayout(view: EditorView, setup: PageSetup): Layout {
   const { height } = pageSizePx(setup);
   const top = mmToPx(setup.margins.top);
   const bottom = mmToPx(setup.margins.bottom);
@@ -108,7 +108,7 @@ function computeLayout(view: EditorView, setup: PageSetup, gap: number): Layout 
 
     if (!first && (forceBreak || blockBottom - pageStart > usable)) {
       const used = blockTop - pageStart;
-      breaks.push({ pos: offset, height: Math.max(0, usable - used) + bottom + gap + top });
+      breaks.push({ pos: offset, height: Math.max(0, usable - used) + bottom + top });
       pageStart = blockTop;
     }
     first = false;
@@ -118,11 +118,16 @@ function computeLayout(view: EditorView, setup: PageSetup, gap: number): Layout 
   return { breaks, pages: breaks.length + 1 };
 }
 
+/**
+ * L'espace entre deux feuilles dépend de `--page-gap` (24 px à l'écran,
+ * 0 à l'impression) : l'impression découpe ainsi exactement aux mêmes
+ * endroits qu'à l'écran, sans recalcul.
+ */
 function spacer(height: number) {
   const el = document.createElement("div");
   el.className = "page-spacer";
   el.contentEditable = "false";
-  el.style.height = `${height}px`;
+  el.style.height = `calc(${height}px + var(--page-gap))`;
   return el;
 }
 
@@ -130,8 +135,6 @@ export interface PaginationOptions {
   getSetup: () => PageSetup;
   /** Appelé quand le nombre de pages change, pour dessiner les feuilles. */
   onLayout: (pages: number) => void;
-  /** Espace entre les feuilles (0 pour l'impression). */
-  getGap: () => number;
 }
 
 export const Pagination = Extension.create<PaginationOptions>({
@@ -141,7 +144,6 @@ export const Pagination = Extension.create<PaginationOptions>({
     return {
       getSetup: () => DEFAULT_PAGE_SETUP,
       onLayout: () => {},
-      getGap: () => SCREEN_GAP_PX,
     };
   },
 
@@ -153,7 +155,7 @@ export const Pagination = Extension.create<PaginationOptions>({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (view.isDestroyed) return;
-        const layout = computeLayout(view, options.getSetup(), options.getGap());
+        const layout = computeLayout(view, options.getSetup());
         const signature = layout.breaks.map((b) => `${b.pos}:${Math.round(b.height)}`).join(",");
         options.onLayout(layout.pages);
         if (signature === key.getState(view.state)!.breaks) return;
