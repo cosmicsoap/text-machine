@@ -67,6 +67,69 @@ pub enum Block {
         content: Vec<Inline>,
     },
     HorizontalRule,
+    /// Tableau : une suite de lignes (`TableRow`).
+    Table {
+        #[serde(default)]
+        content: Vec<Block>,
+    },
+    /// Ligne de tableau : une suite de cellules (`TableCell` ou `TableHeader`).
+    TableRow {
+        #[serde(default)]
+        content: Vec<Block>,
+    },
+    TableCell {
+        #[serde(default)]
+        attrs: CellAttrs,
+        #[serde(default)]
+        content: Vec<Block>,
+    },
+    /// Cellule d'en-tête (en gras, en haut du tableau).
+    TableHeader {
+        #[serde(default)]
+        attrs: CellAttrs,
+        #[serde(default)]
+        content: Vec<Block>,
+    },
+    /// Image. Pour l'instant l'image elle-même est dans `src` (adresse
+    /// `data:` en base64) ; elle ira plus tard dans la table `media` du format.
+    Image { attrs: ImageAttrs },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CellAttrs {
+    #[serde(default = "one")]
+    pub colspan: u32,
+    #[serde(default = "one")]
+    pub rowspan: u32,
+    /// Largeur de la colonne en pixels, si elle a été réglée à la souris.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colwidth: Option<Vec<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+}
+
+impl Default for CellAttrs {
+    fn default() -> Self {
+        Self {
+            colspan: 1,
+            rowspan: 1,
+            colwidth: None,
+            align: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageAttrs {
+    pub src: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -237,12 +300,16 @@ impl Block {
             | Block::OrderedList { content, .. }
             | Block::ListItem { content }
             | Block::TaskList { content }
-            | Block::TaskItem { content, .. } => {
+            | Block::TaskItem { content, .. }
+            | Block::Table { content }
+            | Block::TableRow { content }
+            | Block::TableCell { content, .. }
+            | Block::TableHeader { content, .. } => {
                 for block in content {
                     block.write_plain_text(out);
                 }
             }
-            Block::HorizontalRule => out.push('\n'),
+            Block::HorizontalRule | Block::Image { .. } => out.push('\n'),
         }
     }
 }

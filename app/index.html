@@ -75,6 +75,20 @@
       <button data-action="orderedList" title="Liste numérotée (⇧⌘7)">1. Liste</button>
       <button data-action="taskList" title="Liste de cases à cocher (⇧⌘9)">☑ Liste</button>
       <button data-action="blockquote" title="Citation">❝</button>
+      <span class="sep"></span>
+      <button data-action="image" title="Insérer une image depuis un fichier (ou collez-la avec ⌘V)">🖼 Image</button>
+      <button data-action="table" title="Insérer un tableau">▦ Tableau</button>
+      <span class="group" id="table-tools" hidden>
+        <button data-action="rowBefore" title="Insérer une ligne au-dessus">+ Ligne ↑</button>
+        <button data-action="rowAfter" title="Insérer une ligne en dessous">+ Ligne ↓</button>
+        <button data-action="colBefore" title="Insérer une colonne à gauche">+ Col. ←</button>
+        <button data-action="colAfter" title="Insérer une colonne à droite">+ Col. →</button>
+        <button data-action="deleteRow" title="Supprimer la ligne">− Ligne</button>
+        <button data-action="deleteCol" title="Supprimer la colonne">− Col.</button>
+        <button data-action="toggleHeaderRow" title="Première ligne en en-tête">En-tête</button>
+        <button data-action="deleteTable" title="Supprimer le tableau">Suppr. tableau</button>
+      </span>
+      <input type="file" id="image-file" accept="image/*" hidden />
     </header>
     <dialog id="link-dialog">
       <form method="dialog">

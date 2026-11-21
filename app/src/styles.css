@@ -260,3 +260,79 @@ dialog button.primary {
   background: var(--page);
   border-top: 1px solid var(--line);
 }
+
+.toolbar .group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: #f3f6fc;
+}
+
+.toolbar .group[hidden] {
+  display: none;
+}
+
+/* Tableaux */
+.page .tiptap .tableWrapper {
+  margin: 8pt 0;
+  overflow-x: auto;
+}
+
+.page .tiptap table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0;
+}
+
+.page .tiptap :is(td, th) {
+  position: relative;
+  min-width: 1em;
+  padding: 4px 6px;
+  border: 1px solid #9aa0a6;
+  vertical-align: top;
+}
+
+.page .tiptap th {
+  background: #f1f3f4;
+  font-weight: bold;
+  text-align: left;
+}
+
+.page .tiptap :is(td, th) p {
+  margin: 0;
+}
+
+.page .tiptap .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(26 115 232 / 0.15);
+  pointer-events: none;
+}
+
+.page .tiptap .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: #1a73e8;
+  pointer-events: none;
+}
+
+.page .tiptap.resize-cursor {
+  cursor: col-resize;
+}
+
+/* Images */
+.page .tiptap img {
+  max-width: 100%;
+  height: auto;
+}
+
+.page .tiptap img.ProseMirror-selectednode,
+.page .tiptap [data-resize-wrapper].ProseMirror-selectednode {
+  outline: 2px solid #1a73e8;
+}
