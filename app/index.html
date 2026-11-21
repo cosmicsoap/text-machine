@@ -78,6 +78,8 @@
       <span class="sep"></span>
       <button data-action="image" title="Insérer une image depuis un fichier (ou collez-la avec ⌘V)">🖼 Image</button>
       <button data-action="table" title="Insérer un tableau">▦ Tableau</button>
+      <button data-action="pageBreak" title="Saut de page (⌘Entrée)">⤓ Saut de page</button>
+      <button data-action="pageSetup" title="Format des pages, marges, numéros de page">📄 Mise en page</button>
       <span class="group" id="table-tools" hidden>
         <button data-action="rowBefore" title="Insérer une ligne au-dessus">+ Ligne ↑</button>
         <button data-action="rowAfter" title="Insérer une ligne en dessous">+ Ligne ↓</button>
@@ -102,12 +104,43 @@
         </menu>
       </form>
     </dialog>
+    <dialog id="page-dialog">
+      <form method="dialog" class="page-form">
+        <h2>Mise en page</h2>
+        <label>Format
+          <select name="size">
+            <option value="A4">A4 (21 × 29,7 cm)</option>
+            <option value="Letter">Lettre US (21,6 × 27,9 cm)</option>
+          </select>
+        </label>
+        <fieldset>
+          <legend>Orientation</legend>
+          <label class="inline"><input type="radio" name="orientation" value="portrait" /> Portrait</label>
+          <label class="inline"><input type="radio" name="orientation" value="landscape" /> Paysage</label>
+        </fieldset>
+        <fieldset class="margins">
+          <legend>Marges (cm)</legend>
+          <label>Haut <input type="number" name="top" min="0" max="10" step="0.1" /></label>
+          <label>Bas <input type="number" name="bottom" min="0" max="10" step="0.1" /></label>
+          <label>Gauche <input type="number" name="left" min="0" max="10" step="0.1" /></label>
+          <label>Droite <input type="number" name="right" min="0" max="10" step="0.1" /></label>
+        </fieldset>
+        <label class="inline"><input type="checkbox" name="pageNumbers" /> Numéros de page</label>
+        <menu>
+          <button value="cancel" type="submit">Annuler</button>
+          <button value="ok" type="submit" class="primary">OK</button>
+        </menu>
+      </form>
+    </dialog>
     <main class="desk">
-      <div class="page" id="editor"></div>
+      <div class="paper" id="paper">
+        <div class="sheets" id="sheets" aria-hidden="true"></div>
+        <div id="editor"></div>
+      </div>
     </main>
     <footer class="status">
       <span id="file-name">Sans titre</span>
-      <span id="word-count">0 mot</span>
+      <span><span id="page-count">1 page</span> · <span id="word-count">0 mot</span></span>
     </footer>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -13,6 +13,16 @@ import { TaskList, TaskItem } from "@tiptap/extension-list";
 import { TableKit } from "@tiptap/extension-table";
 import Image from "@tiptap/extension-image";
 import FileHandler from "@tiptap/extension-file-handler";
+import {
+  DEFAULT_PAGE_SETUP,
+  PageBreak,
+  Pagination,
+  SCREEN_GAP_PX,
+  mmToPx,
+  pageSizePx,
+  refreshPagination,
+  type PageSetup,
+} from "./extensions/pagination";
 import { ParagraphFormat } from "./extensions/paragraph-format";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -20,6 +30,8 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 const FILTERS = [{ name: "Document Text Machine", extensions: ["tmd"] }];
 
 let currentPath: string | null = null;
+let pageSetup: PageSetup = structuredClone(DEFAULT_PAGE_SETUP);
+let pageGap = SCREEN_GAP_PX;
 
 const editor = new Editor({
   element: document.querySelector<HTMLElement>("#editor")!,
@@ -38,6 +50,12 @@ const editor = new Editor({
     TaskList,
     TaskItem.configure({ nested: true }),
     ParagraphFormat,
+    PageBreak,
+    Pagination.configure({
+      getSetup: () => pageSetup,
+      getGap: () => pageGap,
+      onLayout: (pages) => drawSheets(pages),
+    }),
     TableKit.configure({ table: { resizable: true } }),
     Image.configure({
       allowBase64: true,
@@ -56,6 +74,57 @@ const editor = new Editor({
   onSelectionUpdate: () => refreshToolbar(),
   onTransaction: () => refreshToolbar(),
 });
+
+// --- Pages -----------------------------------------------------------------
+
+const paper = document.querySelector<HTMLElement>("#paper")!;
+const sheets = document.querySelector<HTMLElement>("#sheets")!;
+
+/** Applique le format de page : taille de la feuille et marges. */
+function applyPageSetup() {
+  const { width, height } = pageSizePx(pageSetup);
+  const m = pageSetup.margins;
+  paper.style.setProperty("--page-w", `${width}px`);
+  paper.style.setProperty("--page-h", `${height}px`);
+  paper.style.setProperty("--page-gap", `${pageGap}px`);
+  paper.style.setProperty("--m-top", `${mmToPx(m.top)}px`);
+  paper.style.setProperty("--m-bottom", `${mmToPx(m.bottom)}px`);
+  paper.style.setProperty("--m-left", `${mmToPx(m.left)}px`);
+  paper.style.setProperty("--m-right", `${mmToPx(m.right)}px`);
+  lastPages = -1;
+}
+
+let lastPages = -1;
+/** Dessine une feuille blanche (avec son numéro) par page. */
+function drawSheets(pages: number) {
+  if (pages === lastPages) return;
+  lastPages = pages;
+  const { height } = pageSizePx(pageSetup);
+  paper.style.setProperty("--pages", String(pages));
+  sheets.replaceChildren(
+    ...Array.from({ length: pages }, (_, i) => {
+      const sheet = document.createElement("div");
+      sheet.className = "sheet";
+      sheet.style.top = `${i * (height + pageGap)}px`;
+      if (pageSetup.pageNumbers) {
+        const number = document.createElement("span");
+        number.className = "page-number";
+        number.textContent = String(i + 1);
+        sheet.append(number);
+      }
+      return sheet;
+    }),
+  );
+  document.querySelector("#page-count")!.textContent = `${pages} page${pages > 1 ? "s" : ""}`;
+}
+
+function setPageSetup(setup: PageSetup) {
+  pageSetup = setup;
+  applyPageSetup();
+  refreshPagination(editor.view);
+}
+
+applyPageSetup();
 
 // --- Images ----------------------------------------------------------------
 
@@ -98,8 +167,11 @@ async function openFile() {
   const path = await open({ multiple: false, filters: FILTERS });
   if (typeof path !== "string") return;
   try {
-    const doc = await invoke<JSONContent>("open_document", { path });
-    editor.commands.setContent(doc);
+    const file = await invoke<{ document: JSONContent; page: PageSetup }>("open_document", {
+      path,
+    });
+    editor.commands.setContent(file.document);
+    setPageSetup(file.page);
     setPath(path);
     updateWordCount();
   } catch (e) {
@@ -114,7 +186,7 @@ async function saveFile() {
     if (!path) return;
   }
   try {
-    await invoke("save_document", { path, doc: editor.getJSON() });
+    await invoke("save_document", { path, doc: editor.getJSON(), page: pageSetup });
     setPath(path);
   } catch (e) {
     alert(String(e));
@@ -169,7 +241,41 @@ const actions: Record<string, () => unknown> = {
   deleteCol: () => chain().deleteColumn().run(),
   toggleHeaderRow: () => chain().toggleHeaderRow().run(),
   deleteTable: () => chain().deleteTable().run(),
+  pageBreak: () => chain().setPageBreak().run(),
+  pageSetup: openPageDialog,
 };
+
+// Mise en page : format, orientation, marges (affichées en cm), numéros.
+const pageDialog = $<HTMLDialogElement>("#page-dialog");
+const pageForm = pageDialog.querySelector("form")!;
+const field = (name: string) => pageForm.elements.namedItem(name) as HTMLInputElement;
+const SIDES = ["top", "bottom", "left", "right"] as const;
+
+function openPageDialog() {
+  field("size").value = pageSetup.size;
+  for (const radio of pageForm.querySelectorAll<HTMLInputElement>('[name="orientation"]')) {
+    radio.checked = radio.value === (pageSetup.landscape ? "landscape" : "portrait");
+  }
+  for (const side of SIDES) field(side).value = String(+(pageSetup.margins[side] / 10).toFixed(2));
+  field("pageNumbers").checked = pageSetup.pageNumbers;
+  pageDialog.showModal();
+}
+
+pageDialog.addEventListener("close", () => {
+  setTimeout(() => editor.commands.focus());
+  if (pageDialog.returnValue !== "ok") return;
+  const cm = (side: (typeof SIDES)[number]) => {
+    const value = parseFloat(field(side).value.replace(",", "."));
+    return Number.isFinite(value) ? Math.min(100, Math.max(0, value * 10)) : pageSetup.margins[side];
+  };
+  setPageSetup({
+    size: field("size").value as PageSetup["size"],
+    landscape:
+      pageForm.querySelector<HTMLInputElement>('[name="orientation"]:checked')?.value === "landscape",
+    margins: { top: cm("top"), bottom: cm("bottom"), left: cm("left"), right: cm("right") },
+    pageNumbers: field("pageNumbers").checked,
+  });
+});
 
 const imageInput = $<HTMLInputElement>("#image-file");
 const tableTools = $<HTMLElement>("#table-tools");
