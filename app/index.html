@@ -8,8 +8,13 @@
   </head>
   <body>
     <header class="toolbar" id="toolbar">
+      <button data-action="new" title="Nouveau document (⌘N)">Nouveau</button>
       <button data-action="open" title="Ouvrir (⌘O)">Ouvrir</button>
-      <button data-action="save" title="Enregistrer (⌘S)">Enregistrer</button>
+      <span class="menu-anchor">
+        <button data-action="recent" title="Fichiers récents">Récents ▾</button>
+        <div class="menu" id="recent-menu" hidden></div>
+      </span>
+      <button data-action="save" title="Enregistrer (⌘S) — Enregistrer sous : ⇧⌘S">Enregistrer</button>
       <span class="sep"></span>
       <button data-action="undo" title="Annuler (⌘Z)">↶</button>
       <button data-action="redo" title="Rétablir (⇧⌘Z)">↷</button>
@@ -161,7 +166,7 @@
     </main>
     </div>
     <footer class="status">
-      <span id="file-name">Sans titre</span>
+      <span><span id="file-name">Sans titre</span> <span id="save-status"></span></span>
       <span><span id="page-count">1 page</span> · <span id="word-count">0 mot</span></span>
     </footer>
     <script type="module" src="/src/main.ts"></script>
