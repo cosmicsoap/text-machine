@@ -1,0 +1,12 @@
+# Rust
+/target/
+
+# Node / Vite
+node_modules/
+/app/dist/
+
+# Tauri
+/app/src-tauri/gen/schemas/
+
+# macOS
+.DS_Store
