@@ -435,7 +435,8 @@ async function printDocument() {
   }
 }
 
-const EXPORTS: Record<"md" | "txt", { name: string; extensions: string[] }> = {
+const EXPORTS: Record<"docx" | "md" | "txt", { name: string; extensions: string[] }> = {
+  docx: { name: "Document Word", extensions: ["docx"] },
   md: { name: "Markdown", extensions: ["md"] },
   txt: { name: "Texte brut", extensions: ["txt"] },
 };
@@ -445,7 +446,7 @@ async function exportAs(kind: keyof typeof EXPORTS) {
   const path = await save({ filters: [filter], defaultPath: `${suggestedName()}.${filter.extensions[0]}` });
   if (!path) return;
   try {
-    await invoke("export_document", { path, doc: editor.getJSON() });
+    await invoke("export_document", { path, doc: editor.getJSON(), page: pageSetup });
   } catch (e) {
     alert(String(e));
   }
@@ -473,7 +474,7 @@ exportMenu.addEventListener("click", (event) => {
   const kind = (event.target as HTMLElement).closest("button")?.dataset.export;
   exportMenu.hidden = true;
   if (kind === "print") printDocument();
-  else if (kind === "md" || kind === "txt") exportAs(kind);
+  else if (kind === "docx" || kind === "md" || kind === "txt") exportAs(kind);
 });
 
 // Fichiers récents : un petit menu sous le bouton.

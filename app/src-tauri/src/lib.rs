@@ -77,9 +77,12 @@ fn print_document(webview: tauri::Webview) -> Result<(), String> {
     webview.print().map_err(|e| e.to_string())
 }
 
-/// Exporte en Markdown (`.md`) ou en texte brut (tout autre extension).
+/// Exporte en Word (`.docx`), Markdown (`.md`) ou texte brut (autre extension).
 #[tauri::command]
-fn export_document(path: String, doc: Document) -> Result<(), String> {
+fn export_document(path: String, doc: Document, page: PageSetup) -> Result<(), String> {
+    if path.to_lowercase().ends_with(".docx") {
+        return tm_io_docx::save(&path, &doc, &page).map_err(|e| e.to_string());
+    }
     let contents = if is_markdown(&path) {
         tm_io_markdown::export(&doc)
     } else {

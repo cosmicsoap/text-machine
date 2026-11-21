@@ -15,3 +15,4 @@ tm-model = { path = "crates/tm-model" }
 tm-ops = { path = "crates/tm-ops" }
 tm-io-native = { path = "crates/tm-io-native" }
 tm-io-markdown = { path = "crates/tm-io-markdown" }
+tm-io-docx = { path = "crates/tm-io-docx" }

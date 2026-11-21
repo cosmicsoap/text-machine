@@ -14,8 +14,8 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > rechercher/remplacer (⌘F) et correcteur orthographique du Mac.
 > Enregistrement automatique, fichiers récents, et l'application rouvre
 > le dernier document au lancement. Export PDF (identique à l'écran,
-> via la fenêtre d'impression du Mac), Markdown et texte ; import
-> Markdown et texte. L'export Word (.docx) arrive.
+> via la fenêtre d'impression du Mac), Word (.docx), Markdown et texte ;
+> import Markdown et texte.
 
 ## Comment c'est construit
 
@@ -37,7 +37,8 @@ text-machine/
 │   ├── tm-model/         Le modèle de document (paragraphes, titres, listes, gras…)
 │   ├── tm-ops/           Les modifications du document et annuler / rétablir
 │   ├── tm-io-native/     Le format de fichier .tmd (provisoire)
-│   └── tm-io-markdown/   Import et export Markdown / texte brut
+│   ├── tm-io-markdown/   Import et export Markdown / texte brut
+│   └── tm-io-docx/       Export Word (.docx)
 └── app/
     ├── index.html        La fenêtre : barre d'outils, page, barre d'état
     ├── src/              Le code de l'éditeur web (TypeScript)
