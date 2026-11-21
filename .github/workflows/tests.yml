@@ -1,0 +1,30 @@
+# Vérifications rapides à chaque pull request : tests du cœur Rust et
+# compilation de l'éditeur web (quelques minutes, sur Linux).
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests du cœur Rust
+        run: cargo test --workspace --exclude text-machine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Compiler l'éditeur web
+        working-directory: app
+        run: npm ci && npm run build

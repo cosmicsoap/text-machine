@@ -14,21 +14,80 @@
       <button data-action="undo" title="Annuler (⌘Z)">↶</button>
       <button data-action="redo" title="Rétablir (⇧⌘Z)">↷</button>
       <span class="sep"></span>
-      <select data-action="block" title="Style de paragraphe">
+      <select id="block-style" title="Style de paragraphe">
         <option value="p">Texte normal</option>
-        <option value="1">Titre 1</option>
-        <option value="2">Titre 2</option>
-        <option value="3">Titre 3</option>
+        <option value="1">Titre</option>
+        <option value="2">Titre 1</option>
+        <option value="3">Titre 2</option>
+        <option value="4">Titre 3</option>
       </select>
+      <select id="font-family" title="Police">
+        <option value="">Police par défaut</option>
+        <option>Arial</option>
+        <option>Helvetica Neue</option>
+        <option>Georgia</option>
+        <option>Times New Roman</option>
+        <option>Palatino</option>
+        <option>Garamond</option>
+        <option>Verdana</option>
+        <option>Courier New</option>
+      </select>
+      <select id="font-size" title="Taille du texte">
+        <option value="">Taille</option>
+        <option>8</option><option>9</option><option>10</option><option>11</option>
+        <option>12</option><option>14</option><option>16</option><option>18</option>
+        <option>24</option><option>30</option><option>36</option><option>48</option>
+        <option>60</option><option>72</option>
+      </select>
+      <span class="sep"></span>
       <button data-action="bold" title="Gras (⌘B)"><b>G</b></button>
       <button data-action="italic" title="Italique (⌘I)"><i>I</i></button>
       <button data-action="underline" title="Souligné (⌘U)"><u>S</u></button>
-      <button data-action="strike" title="Barré"><s>B</s></button>
+      <button data-action="strike" title="Barré (⇧⌘X)"><s>B</s></button>
+      <button data-action="superscript" title="Exposant (⌘.)">x²</button>
+      <button data-action="subscript" title="Indice (⌘,)">x₂</button>
+      <label class="color" title="Couleur du texte">
+        <span class="swatch-letter">A</span>
+        <input type="color" id="text-color" value="#c0392b" />
+      </label>
+      <label class="color" title="Couleur de surlignage">
+        <span class="swatch-letter">🖍</span>
+        <input type="color" id="highlight-color" value="#fff3a3" />
+      </label>
+      <button data-action="link" title="Insérer un lien (⌘K)">🔗</button>
+      <button data-action="clearFormat" title="Effacer la mise en forme (⌘\)">⌫ Format</button>
       <span class="sep"></span>
-      <button data-action="bulletList" title="Liste à puces">• Liste</button>
-      <button data-action="orderedList" title="Liste numérotée">1. Liste</button>
+      <button data-action="alignLeft" title="Aligner à gauche (⇧⌘L)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="1" y="5.5" width="9" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="1" y="12.5" width="9" height="1.6"/></svg></button>
+      <button data-action="alignCenter" title="Centrer (⇧⌘E)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="3.5" y="5.5" width="9" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="3.5" y="12.5" width="9" height="1.6"/></svg></button>
+      <button data-action="alignRight" title="Aligner à droite (⇧⌘R)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="6" y="5.5" width="9" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="6" y="12.5" width="9" height="1.6"/></svg></button>
+      <button data-action="alignJustify" title="Justifier (⇧⌘J)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="1" y="5.5" width="14" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="1" y="12.5" width="14" height="1.6"/></svg></button>
+      <select id="line-height" title="Interligne">
+        <option value="">Interligne</option>
+        <option value="1">Simple</option>
+        <option value="1.15">1,15</option>
+        <option value="1.5">1,5</option>
+        <option value="2">Double</option>
+      </select>
+      <button data-action="outdent" title="Diminuer le retrait (⇧Tab)">⇤</button>
+      <button data-action="indent" title="Augmenter le retrait (Tab)">⇥</button>
+      <span class="sep"></span>
+      <button data-action="bulletList" title="Liste à puces (⇧⌘8)">• Liste</button>
+      <button data-action="orderedList" title="Liste numérotée (⇧⌘7)">1. Liste</button>
+      <button data-action="taskList" title="Liste de cases à cocher (⇧⌘9)">☑ Liste</button>
       <button data-action="blockquote" title="Citation">❝</button>
     </header>
+    <dialog id="link-dialog">
+      <form method="dialog">
+        <label>Adresse du lien
+          <input type="url" id="link-url" placeholder="https://exemple.fr" />
+        </label>
+        <menu>
+          <button value="remove" type="submit">Retirer le lien</button>
+          <button value="cancel" type="submit">Annuler</button>
+          <button value="ok" type="submit" class="primary">Appliquer</button>
+        </menu>
+      </form>
+    </dialog>
     <main class="desk">
       <div class="page" id="editor"></div>
     </main>

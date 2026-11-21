@@ -27,6 +27,7 @@ body {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
@@ -56,6 +57,96 @@ body {
 
 .toolbar select {
   border-color: var(--line);
+  max-width: 150px;
+}
+
+.toolbar .icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  fill: currentColor;
+}
+
+/* Choix de couleur : une lettre au-dessus d'une barre de couleur. */
+.toolbar .color {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.toolbar .color:hover {
+  background: var(--desk);
+}
+
+.toolbar .color .swatch-letter {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.toolbar .color input {
+  width: 22px;
+  height: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.toolbar .color input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.toolbar .color input::-webkit-color-swatch {
+  border: 0;
+  border-radius: 1px;
+}
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  font-size: 13px;
+  min-width: 340px;
+}
+
+dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+dialog input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+dialog menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+dialog button {
+  font: inherit;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--page);
+  cursor: pointer;
+}
+
+dialog button.primary {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: white;
 }
 
 .sep {
@@ -86,6 +177,71 @@ body {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 12pt;
   line-height: 1.5;
+}
+
+.page .tiptap :is(h1, h2, h3, h4) {
+  font-weight: normal;
+  line-height: 1.25;
+}
+
+.page .tiptap h1 {
+  font-size: 26pt;
+  margin: 0 0 6pt;
+}
+
+.page .tiptap h2 {
+  font-size: 20pt;
+  margin: 20pt 0 6pt;
+}
+
+.page .tiptap h3 {
+  font-size: 16pt;
+  margin: 18pt 0 4pt;
+}
+
+.page .tiptap h4 {
+  font-size: 14pt;
+  margin: 14pt 0 4pt;
+  color: #434343;
+}
+
+.page .tiptap p {
+  margin: 0 0 6pt;
+}
+
+.page .tiptap a {
+  color: #1155cc;
+  text-decoration: underline;
+}
+
+.page .tiptap mark {
+  background-color: #fff3a3;
+  color: inherit;
+}
+
+.page .tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+
+.page .tiptap ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+
+.page .tiptap ul[data-type="taskList"] li > label {
+  user-select: none;
+  padding-top: 0.15em;
+}
+
+.page .tiptap ul[data-type="taskList"] li > div {
+  flex: 1;
+}
+
+.page .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--muted);
+  text-decoration: line-through;
 }
 
 .page .tiptap blockquote {

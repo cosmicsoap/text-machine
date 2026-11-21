@@ -21,6 +21,8 @@ pub struct Document {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Block {
     Paragraph {
+        #[serde(default, skip_serializing_if = "BlockStyle::is_empty")]
+        attrs: BlockStyle,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         content: Vec<Inline>,
     },
@@ -47,6 +49,17 @@ pub enum Block {
         #[serde(default)]
         content: Vec<Block>,
     },
+    /// Liste de cases à cocher.
+    TaskList {
+        #[serde(default)]
+        content: Vec<Block>,
+    },
+    TaskItem {
+        #[serde(default)]
+        attrs: TaskItemAttrs,
+        #[serde(default)]
+        content: Vec<Block>,
+    },
     CodeBlock {
         #[serde(default)]
         attrs: CodeBlockAttrs,
@@ -59,6 +72,36 @@ pub enum Block {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeadingAttrs {
     pub level: u8,
+    #[serde(flatten)]
+    pub style: BlockStyle,
+}
+
+/// Mise en forme d'un paragraphe ou d'un titre. Les valeurs absentes
+/// (`None`) prennent la valeur par défaut du style.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockStyle {
+    /// `left`, `center`, `right` ou `justify`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_align: Option<String>,
+    /// Interligne, en multiple de la taille du texte (`"1.15"`, `"2"`…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<String>,
+    /// Retrait à gauche, en nombre de crans (1 cran = 1,27 cm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indent: Option<u8>,
+}
+
+impl BlockStyle {
+    pub fn is_empty(&self) -> bool {
+        self == &BlockStyle::default()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TaskItemAttrs {
+    #[serde(default)]
+    pub checked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,11 +148,45 @@ pub enum Mark {
     Strike,
     Code,
     Link { attrs: LinkAttrs },
+    /// Police, taille et couleurs du texte.
+    TextStyle {
+        #[serde(default)]
+        attrs: TextStyleAttrs,
+    },
+    /// Surlignage (couleur de fond façon « surligneur »).
+    Highlight {
+        #[serde(default)]
+        attrs: HighlightAttrs,
+    },
+    Subscript,
+    Superscript,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LinkAttrs {
     pub href: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextStyleAttrs {
+    /// Nom de police CSS, par exemple `"Georgia"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    /// Taille CSS, par exemple `"14pt"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<String>,
+    /// Couleur du texte, par exemple `"#c0392b"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct HighlightAttrs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 impl Inline {
@@ -126,6 +203,7 @@ impl Block {
     /// Un paragraphe contenant du texte simple.
     pub fn paragraph(text: impl Into<String>) -> Self {
         Block::Paragraph {
+            attrs: BlockStyle::default(),
             content: vec![Inline::text(text)],
         }
     }
@@ -133,14 +211,17 @@ impl Block {
     /// Un titre de niveau `level` (1 à 6).
     pub fn heading(level: u8, text: impl Into<String>) -> Self {
         Block::Heading {
-            attrs: HeadingAttrs { level },
+            attrs: HeadingAttrs {
+                level,
+                style: BlockStyle::default(),
+            },
             content: vec![Inline::text(text)],
         }
     }
 
     fn write_plain_text(&self, out: &mut String) {
         match self {
-            Block::Paragraph { content }
+            Block::Paragraph { content, .. }
             | Block::Heading { content, .. }
             | Block::CodeBlock { content, .. } => {
                 for inline in content {
@@ -154,7 +235,9 @@ impl Block {
             Block::Blockquote { content }
             | Block::BulletList { content }
             | Block::OrderedList { content, .. }
-            | Block::ListItem { content } => {
+            | Block::ListItem { content }
+            | Block::TaskList { content }
+            | Block::TaskItem { content, .. } => {
                 for block in content {
                     block.write_plain_text(out);
                 }

@@ -5,9 +5,10 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 
 ![Aperçu de l'éditeur](docs/apercu.png)
 
-> **État :** squelette du projet. On peut écrire, mettre en forme
-> (gras, italique, titres, listes…), enregistrer et rouvrir un document.
-> La pagination, l'export PDF/Word, le correcteur, etc. viendront ensuite.
+> **État :** MVP en construction. On peut écrire, mettre en forme
+> (police, taille, couleurs, surlignage, liens, alignement, interligne,
+> retraits, titres, listes et cases à cocher), enregistrer et rouvrir un
+> document. La pagination, l'export PDF/Word, le correcteur, etc. arrivent.
 
 ## Comment c'est construit
 
