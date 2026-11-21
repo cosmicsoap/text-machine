@@ -156,6 +156,119 @@ dialog button.primary {
   background: var(--line);
 }
 
+.workspace {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.outline {
+  width: 220px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 16px 12px;
+  font-size: 13px;
+  border-right: 1px solid var(--line);
+  background: var(--page);
+}
+
+.outline[hidden] {
+  display: none;
+}
+
+.outline h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.outline ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.outline li {
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline li:hover {
+  background: var(--desk);
+}
+
+.outline li.level-1 {
+  font-weight: 600;
+}
+
+.outline li.level-3 {
+  padding-left: 18px;
+}
+
+.outline li.level-4 {
+  padding-left: 30px;
+}
+
+.outline .empty {
+  color: var(--muted);
+}
+
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  background: #f8f9fa;
+  border-bottom: 1px solid var(--line);
+}
+
+.find-bar[hidden] {
+  display: none;
+}
+
+.find-bar input:not([type]) {
+  font: inherit;
+  width: 180px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.find-bar button {
+  font: inherit;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--page);
+  cursor: pointer;
+}
+
+.find-bar label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+#find-count {
+  min-width: 80px;
+  color: var(--muted);
+}
+
+.search-match {
+  background: #fde68a;
+}
+
+.search-match.current {
+  background: #f59e0b;
+}
+
 .desk {
   flex: 1;
   overflow: auto;

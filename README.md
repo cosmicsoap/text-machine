@@ -10,8 +10,9 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > retraits, titres, listes et cases à cocher), insérer des tableaux et des
 > images (depuis un fichier ou en les collant), enregistrer et rouvrir un
 > document. Les pages s'affichent comme sur papier (A4 ou Lettre US,
-> marges, sauts de page, numéros de page). L'export PDF/Word, le
-> correcteur, etc. arrivent.
+> marges, sauts de page, numéros de page). Plan du document,
+> rechercher/remplacer (⌘F) et correcteur orthographique du Mac.
+> L'export PDF/Word, l'enregistrement automatique, etc. arrivent.
 
 ## Comment c'est construit
 

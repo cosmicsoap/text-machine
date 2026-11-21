@@ -80,6 +80,10 @@
       <button data-action="table" title="Insérer un tableau">▦ Tableau</button>
       <button data-action="pageBreak" title="Saut de page (⌘Entrée)">⤓ Saut de page</button>
       <button data-action="pageSetup" title="Format des pages, marges, numéros de page">📄 Mise en page</button>
+      <span class="sep"></span>
+      <button data-action="outline" title="Plan du document (⇧⌘O)">☰ Plan</button>
+      <button data-action="find" title="Rechercher et remplacer (⌘F)">🔍</button>
+      <button data-action="spellcheck" title="Correcteur orthographique">ABC✓</button>
       <span class="group" id="table-tools" hidden>
         <button data-action="rowBefore" title="Insérer une ligne au-dessus">+ Ligne ↑</button>
         <button data-action="rowAfter" title="Insérer une ligne en dessous">+ Ligne ↓</button>
@@ -132,12 +136,30 @@
         </menu>
       </form>
     </dialog>
+    <div class="find-bar" id="find-bar" hidden>
+      <input id="find-input" placeholder="Rechercher" />
+      <span id="find-count"></span>
+      <button data-find="prev" title="Précédent (⇧Entrée)">↑</button>
+      <button data-find="next" title="Suivant (Entrée)">↓</button>
+      <label class="inline"><input type="checkbox" id="find-case" /> Aa</label>
+      <input id="replace-input" placeholder="Remplacer par" />
+      <button data-find="replace">Remplacer</button>
+      <button data-find="replaceAll">Tout remplacer</button>
+      <button data-find="close" title="Fermer (Échap)">✕</button>
+    </div>
+    <div class="workspace">
+    <nav class="outline" id="outline" hidden>
+      <h2>Plan</h2>
+      <ol id="outline-list"></ol>
+      <p class="empty" id="outline-empty">Les titres du document apparaîtront ici.</p>
+    </nav>
     <main class="desk">
       <div class="paper" id="paper">
         <div class="sheets" id="sheets" aria-hidden="true"></div>
         <div id="editor"></div>
       </div>
     </main>
+    </div>
     <footer class="status">
       <span id="file-name">Sans titre</span>
       <span><span id="page-count">1 page</span> · <span id="word-count">0 mot</span></span>

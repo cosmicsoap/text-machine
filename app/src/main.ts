@@ -23,6 +23,7 @@ import {
   refreshPagination,
   type PageSetup,
 } from "./extensions/pagination";
+import { Search, getSearchState } from "./extensions/search";
 import { ParagraphFormat } from "./extensions/paragraph-format";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -51,6 +52,7 @@ const editor = new Editor({
     TaskItem.configure({ nested: true }),
     ParagraphFormat,
     PageBreak,
+    Search,
     Pagination.configure({
       getSetup: () => pageSetup,
       getGap: () => pageGap,
@@ -70,9 +72,119 @@ const editor = new Editor({
   ],
   content: "<h1>Bienvenue dans Text Machine</h1><p>Commencez à écrire ici.</p>",
   autofocus: "end",
-  onUpdate: () => scheduleWordCount(),
+  // Correcteur orthographique du système (macOS), en français.
+  editorProps: { attributes: { spellcheck: "true", lang: "fr" } },
+  onUpdate: () => {
+    scheduleWordCount();
+    scheduleOutline();
+  },
   onSelectionUpdate: () => refreshToolbar(),
   onTransaction: () => refreshToolbar(),
+});
+
+// --- Plan du document -------------------------------------------------------
+
+const outline = document.querySelector<HTMLElement>("#outline")!;
+const outlineList = document.querySelector<HTMLOListElement>("#outline-list")!;
+let outlineTimer: number | undefined;
+
+function scheduleOutline() {
+  window.clearTimeout(outlineTimer);
+  outlineTimer = window.setTimeout(updateOutline, 250);
+}
+
+function updateOutline() {
+  if (outline.hidden) return;
+  const items: HTMLLIElement[] = [];
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name !== "heading") return true;
+    const li = document.createElement("li");
+    li.className = `level-${node.attrs.level}`;
+    li.textContent = node.textContent || "(titre vide)";
+    li.addEventListener("click", () => {
+      editor.chain().focus().setTextSelection(pos + 1).run();
+      (editor.view.nodeDOM(pos) as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+    items.push(li);
+    return false;
+  });
+  outlineList.replaceChildren(...items);
+  document.querySelector<HTMLElement>("#outline-empty")!.hidden = items.length > 0;
+}
+
+function toggleOutline() {
+  outline.hidden = !outline.hidden;
+  toolbar.querySelector('[data-action="outline"]')?.classList.toggle("active", !outline.hidden);
+  updateOutline();
+}
+
+// --- Correcteur orthographique --------------------------------------------
+
+function toggleSpellcheck() {
+  const dom = editor.view.dom as HTMLElement;
+  const on = dom.spellcheck;
+  dom.spellcheck = !on;
+  toolbar.querySelector('[data-action="spellcheck"]')?.classList.toggle("active", !on);
+  // Force le navigateur à revérifier (ou effacer) les soulignements.
+  dom.blur();
+  editor.commands.focus();
+}
+
+// --- Rechercher / remplacer -------------------------------------------------
+
+const findBar = document.querySelector<HTMLElement>("#find-bar")!;
+const findInput = document.querySelector<HTMLInputElement>("#find-input")!;
+const replaceInput = document.querySelector<HTMLInputElement>("#replace-input")!;
+const findCase = document.querySelector<HTMLInputElement>("#find-case")!;
+const findCount = document.querySelector<HTMLElement>("#find-count")!;
+
+function openFind() {
+  findBar.hidden = false;
+  const { from, to, empty } = editor.state.selection;
+  if (!empty) findInput.value = editor.state.doc.textBetween(from, to, " ");
+  findInput.focus();
+  findInput.select();
+  runSearch();
+}
+
+function closeFind() {
+  findBar.hidden = true;
+  editor.chain().setSearch("").focus().run();
+}
+
+function runSearch() {
+  editor.commands.setSearch(findInput.value, findCase.checked);
+  refreshFindCount();
+}
+
+function refreshFindCount() {
+  const s = getSearchState(editor.state);
+  findCount.textContent = !s.query
+    ? ""
+    : s.matches.length
+      ? `${s.current + 1} sur ${s.matches.length}`
+      : "Aucun résultat";
+}
+
+findInput.addEventListener("input", runSearch);
+findCase.addEventListener("change", runSearch);
+findBar.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeFind();
+  else if (event.key === "Enter" && event.target === findInput) {
+    event.preventDefault();
+    if (event.shiftKey) editor.commands.previousMatch();
+    else editor.commands.nextMatch();
+    refreshFindCount();
+  }
+});
+findBar.addEventListener("click", (event) => {
+  const action = (event.target as HTMLElement).closest("button")?.dataset.find;
+  if (action === "next") editor.commands.nextMatch();
+  else if (action === "prev") editor.commands.previousMatch();
+  else if (action === "replace") editor.commands.replaceCurrent(replaceInput.value);
+  else if (action === "replaceAll") editor.commands.replaceAll(replaceInput.value);
+  else if (action === "close") return closeFind();
+  refreshFindCount();
 });
 
 // --- Pages -----------------------------------------------------------------
@@ -242,6 +354,9 @@ const actions: Record<string, () => unknown> = {
   toggleHeaderRow: () => chain().toggleHeaderRow().run(),
   deleteTable: () => chain().deleteTable().run(),
   pageBreak: () => chain().setPageBreak().run(),
+  outline: toggleOutline,
+  find: openFind,
+  spellcheck: toggleSpellcheck,
   pageSetup: openPageDialog,
 };
 
@@ -405,6 +520,12 @@ window.addEventListener("keydown", (event) => {
   } else if (event.key === "o") {
     event.preventDefault();
     openFile();
+  } else if (event.key === "f") {
+    event.preventDefault();
+    openFind();
+  } else if (event.key === "O" && event.shiftKey) {
+    event.preventDefault();
+    toggleOutline();
   } else if (event.key === "k") {
     event.preventDefault();
     openLinkDialog();
@@ -415,6 +536,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 refreshToolbar();
+toolbar.querySelector('[data-action="spellcheck"]')?.classList.add("active");
 updateWordCount();
 
 // En développement, l'éditeur est accessible depuis la console (`editor`).
