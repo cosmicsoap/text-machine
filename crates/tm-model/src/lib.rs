@@ -67,6 +67,8 @@ pub enum Block {
         content: Vec<Inline>,
     },
     HorizontalRule,
+    /// Saut de page manuel.
+    PageBreak,
     /// Tableau : une suite de lignes (`TableRow`).
     Table {
         #[serde(default)]
@@ -309,7 +311,7 @@ impl Block {
                     block.write_plain_text(out);
                 }
             }
-            Block::HorizontalRule | Block::Image { .. } => out.push('\n'),
+            Block::HorizontalRule | Block::PageBreak | Block::Image { .. } => out.push('\n'),
         }
     }
 }
@@ -341,6 +343,80 @@ impl Document {
     /// Écrit le document au format JSON de TipTap / ProseMirror.
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
+    }
+}
+
+/// Format des pages du document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PageSetup {
+    pub size: PageSize,
+    /// Paysage (pages plus larges que hautes).
+    pub landscape: bool,
+    /// Marges en millimètres.
+    pub margins: Margins,
+    /// Afficher le numéro en bas de chaque page.
+    pub page_numbers: bool,
+}
+
+impl Default for PageSetup {
+    fn default() -> Self {
+        Self {
+            size: PageSize::A4,
+            landscape: false,
+            margins: Margins::default(),
+            page_numbers: true,
+        }
+    }
+}
+
+impl PageSetup {
+    /// Largeur et hauteur de la page en millimètres, orientation comprise.
+    pub fn dimensions_mm(&self) -> (f64, f64) {
+        let (w, h) = self.size.portrait_mm();
+        if self.landscape {
+            (h, w)
+        } else {
+            (w, h)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PageSize {
+    #[default]
+    A4,
+    Letter,
+}
+
+impl PageSize {
+    /// Largeur et hauteur en portrait, en millimètres.
+    pub fn portrait_mm(self) -> (f64, f64) {
+        match self {
+            PageSize::A4 => (210.0, 297.0),
+            PageSize::Letter => (215.9, 279.4),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Margins {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+impl Default for Margins {
+    /// 2,54 cm partout, comme Google Docs.
+    fn default() -> Self {
+        Self {
+            top: 25.4,
+            bottom: 25.4,
+            left: 25.4,
+            right: 25.4,
+        }
     }
 }
 

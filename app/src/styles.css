@@ -162,89 +162,128 @@ dialog button.primary {
   padding: 32px 16px;
 }
 
-/* Une « page » A4 visuelle ; la vraie pagination viendra plus tard. */
-.page {
-  max-width: 21cm;
-  min-height: 29.7cm;
+/* Les feuilles : dessinées derrière le texte, une par page (voir
+   extensions/pagination.ts). Le texte, lui, est un seul bloc éditable. */
+.paper {
+  position: relative;
+  width: var(--page-w);
   margin: 0 auto;
-  padding: 2.5cm;
+}
+
+.sheets {
+  position: absolute;
+  inset: 0;
+}
+
+.sheet {
+  position: absolute;
+  left: 0;
+  width: var(--page-w);
+  height: var(--page-h);
   background: var(--page);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
 }
 
-.page .tiptap {
+.page-number {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--m-bottom) / 2 - 0.5em);
+  text-align: center;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10pt;
+  color: var(--muted);
+}
+
+.page-spacer {
+  pointer-events: none;
+}
+
+.page-break {
+  height: 0;
+  border-top: 1px dashed transparent;
+}
+
+.page-break.ProseMirror-selectednode {
+  border-top-color: #1a73e8;
+}
+
+#editor .tiptap {
+  position: relative;
+  min-height: calc(var(--pages, 1) * (var(--page-h) + var(--page-gap)) - var(--page-gap));
+  padding: var(--m-top) var(--m-right) var(--m-bottom) var(--m-left);
   outline: none;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 12pt;
   line-height: 1.5;
 }
 
-.page .tiptap :is(h1, h2, h3, h4) {
+#editor .tiptap :is(h1, h2, h3, h4) {
   font-weight: normal;
   line-height: 1.25;
 }
 
-.page .tiptap h1 {
+#editor .tiptap h1 {
   font-size: 26pt;
   margin: 0 0 6pt;
 }
 
-.page .tiptap h2 {
+#editor .tiptap h2 {
   font-size: 20pt;
   margin: 20pt 0 6pt;
 }
 
-.page .tiptap h3 {
+#editor .tiptap h3 {
   font-size: 16pt;
   margin: 18pt 0 4pt;
 }
 
-.page .tiptap h4 {
+#editor .tiptap h4 {
   font-size: 14pt;
   margin: 14pt 0 4pt;
   color: #434343;
 }
 
-.page .tiptap p {
+#editor .tiptap p {
   margin: 0 0 6pt;
 }
 
-.page .tiptap a {
+#editor .tiptap a {
   color: #1155cc;
   text-decoration: underline;
 }
 
-.page .tiptap mark {
+#editor .tiptap mark {
   background-color: #fff3a3;
   color: inherit;
 }
 
-.page .tiptap ul[data-type="taskList"] {
+#editor .tiptap ul[data-type="taskList"] {
   list-style: none;
   padding-left: 0.2em;
 }
 
-.page .tiptap ul[data-type="taskList"] li {
+#editor .tiptap ul[data-type="taskList"] li {
   display: flex;
   align-items: flex-start;
   gap: 0.5em;
 }
 
-.page .tiptap ul[data-type="taskList"] li > label {
+#editor .tiptap ul[data-type="taskList"] li > label {
   user-select: none;
   padding-top: 0.15em;
 }
 
-.page .tiptap ul[data-type="taskList"] li > div {
+#editor .tiptap ul[data-type="taskList"] li > div {
   flex: 1;
 }
 
-.page .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
+#editor .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
   color: var(--muted);
   text-decoration: line-through;
 }
 
-.page .tiptap blockquote {
+#editor .tiptap blockquote {
   margin-left: 0;
   padding-left: 1em;
   border-left: 3px solid var(--line);
@@ -274,19 +313,19 @@ dialog button.primary {
 }
 
 /* Tableaux */
-.page .tiptap .tableWrapper {
+#editor .tiptap .tableWrapper {
   margin: 8pt 0;
   overflow-x: auto;
 }
 
-.page .tiptap table {
+#editor .tiptap table {
   border-collapse: collapse;
   table-layout: fixed;
   width: 100%;
   margin: 0;
 }
 
-.page .tiptap :is(td, th) {
+#editor .tiptap :is(td, th) {
   position: relative;
   min-width: 1em;
   padding: 4px 6px;
@@ -294,17 +333,17 @@ dialog button.primary {
   vertical-align: top;
 }
 
-.page .tiptap th {
+#editor .tiptap th {
   background: #f1f3f4;
   font-weight: bold;
   text-align: left;
 }
 
-.page .tiptap :is(td, th) p {
+#editor .tiptap :is(td, th) p {
   margin: 0;
 }
 
-.page .tiptap .selectedCell::after {
+#editor .tiptap .selectedCell::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -312,7 +351,7 @@ dialog button.primary {
   pointer-events: none;
 }
 
-.page .tiptap .column-resize-handle {
+#editor .tiptap .column-resize-handle {
   position: absolute;
   top: 0;
   right: -2px;
@@ -322,17 +361,46 @@ dialog button.primary {
   pointer-events: none;
 }
 
-.page .tiptap.resize-cursor {
+#editor .tiptap.resize-cursor {
   cursor: col-resize;
 }
 
 /* Images */
-.page .tiptap img {
+#editor .tiptap img {
   max-width: 100%;
   height: auto;
 }
 
-.page .tiptap img.ProseMirror-selectednode,
-.page .tiptap [data-resize-wrapper].ProseMirror-selectednode {
+#editor .tiptap img.ProseMirror-selectednode,
+#editor .tiptap [data-resize-wrapper].ProseMirror-selectednode {
   outline: 2px solid #1a73e8;
+}
+
+.page-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.page-form h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.page-form fieldset {
+  display: flex;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.page-form .margins input {
+  width: 64px;
+}
+
+dialog label.inline {
+  flex-direction: row;
+  align-items: center;
 }

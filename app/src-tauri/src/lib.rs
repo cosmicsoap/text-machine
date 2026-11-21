@@ -4,7 +4,8 @@
 //! `invoke(...)`. Le document circule au format JSON de TipTap, converti en
 //! `tm_model::Document` à l'entrée.
 
-use tm_model::Document;
+use tm_io_native::NativeFile;
+use tm_model::{Document, PageSetup};
 
 #[tauri::command]
 fn word_count(doc: Document) -> usize {
@@ -12,13 +13,17 @@ fn word_count(doc: Document) -> usize {
 }
 
 #[tauri::command]
-fn open_document(path: String) -> Result<Document, String> {
+fn open_document(path: String) -> Result<NativeFile, String> {
     tm_io_native::open(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn save_document(path: String, doc: Document) -> Result<(), String> {
-    tm_io_native::save(&path, &doc).map_err(|e| e.to_string())
+fn save_document(path: String, doc: Document, page: PageSetup) -> Result<(), String> {
+    let file = NativeFile {
+        document: doc,
+        page,
+    };
+    tm_io_native::save(&path, &file).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

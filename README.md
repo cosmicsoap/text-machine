@@ -9,7 +9,9 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > (police, taille, couleurs, surlignage, liens, alignement, interligne,
 > retraits, titres, listes et cases à cocher), insérer des tableaux et des
 > images (depuis un fichier ou en les collant), enregistrer et rouvrir un
-> document. La pagination, l'export PDF/Word, le correcteur, etc. arrivent.
+> document. Les pages s'affichent comme sur papier (A4 ou Lettre US,
+> marges, sauts de page, numéros de page). L'export PDF/Word, le
+> correcteur, etc. arrivent.
 
 ## Comment c'est construit
 
