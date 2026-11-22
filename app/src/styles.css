@@ -604,12 +604,41 @@ dialog label.inline {
     display: none;
   }
 
-  /* La dernière page ne doit pas en ajouter une vide. */
-  #editor .tiptap {
-    min-height: 0;
-    height: calc(var(--pages, 1) * var(--page-h));
+  /* La dernière page ne doit pas en ajouter une vide : le contenu fait
+     un peu moins que N pages (les arrondis px → points débordaient). */
+  html,
+  body {
+    display: block;
     overflow: hidden;
   }
+
+  .paper,
+  #editor .tiptap {
+    min-height: 0;
+    height: calc(var(--pages, 1) * var(--page-h) - 2px);
+    overflow: hidden;
+  }
+
+  /* Ni curseur ni sélection dans le PDF. */
+  #editor .tiptap {
+    caret-color: transparent;
+  }
+
+  ::selection {
+    background: transparent;
+  }
+
+  .ProseMirror-gapcursor {
+    display: none !important;
+  }
+
+  .ProseMirror-selectednode {
+    outline: none !important;
+  }
+}
+
+body.exporting #editor .tiptap {
+  caret-color: transparent;
 }
 
 .menu hr {

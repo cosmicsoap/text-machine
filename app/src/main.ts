@@ -250,6 +250,14 @@ applyPageSetup();
 
 // --- Images ----------------------------------------------------------------
 
+// Un fichier lâché à côté de la page ne doit pas remplacer l'application
+// (le navigateur l'ouvrirait) : seule la page accepte les images.
+for (const type of ["dragover", "drop"] as const) {
+  window.addEventListener(type, (event) => {
+    if (!(event.target as HTMLElement).closest?.(".tiptap")) event.preventDefault();
+  });
+}
+
 /** Les images sont gardées dans le document (adresse `data:` en base64). */
 function insertImageFile(file: File, pos?: number) {
   const reader = new FileReader();
@@ -477,12 +485,20 @@ async function exportPdf() {
     defaultPath: `${suggestedName()}.pdf`,
   });
   if (!path) return;
+  // Sans curseur ni sélection dans le PDF : on les remet après.
+  const selection = editor.state.selection;
+  editor.commands.blur();
+  window.getSelection()?.removeAllRanges();
+  document.body.classList.add("exporting");
   try {
     await invoke("export_pdf", { path, page: pageSetup });
     setSaveStatus(`PDF enregistré : ${fileName(path)}`);
   } catch (e) {
     alert(`${e}\nLa fenêtre d'impression va s'ouvrir : choisissez « Enregistrer au format PDF ».`);
     printDocument();
+  } finally {
+    document.body.classList.remove("exporting");
+    editor.chain().setTextSelection({ from: selection.from, to: selection.to }).focus().run();
   }
 }
 
