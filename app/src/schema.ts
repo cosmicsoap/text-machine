@@ -19,6 +19,7 @@ import { Footnote } from "./extensions/footnote";
 import { TableOfContents, type TocOptions } from "./extensions/toc";
 import { Deletion, Insertion } from "./extensions/suggestions";
 import { DiffHighlight } from "./extensions/diff-highlight";
+import { CommentMark } from "./extensions/comments";
 
 export function documentExtensions(options: { pageOf?: TocOptions["pageOf"] } = {}): AnyExtension[] {
   return [
@@ -50,5 +51,6 @@ export function documentExtensions(options: { pageOf?: TocOptions["pageOf"] } = 
     Insertion,
     Deletion,
     DiffHighlight,
+    CommentMark,
   ];
 }

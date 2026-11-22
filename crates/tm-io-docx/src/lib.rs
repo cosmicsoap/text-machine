@@ -6,6 +6,7 @@
 //! numérotées, cases à cocher), citations, code, tableaux, images, sauts de
 //! page, format de page, marges et numéros de page.
 
+mod comments;
 mod import;
 mod notes;
 
@@ -55,6 +56,7 @@ const EMU_PER_PX: f64 = 9525.0;
 pub fn export(doc: &Document, page: &PageSetup, styles: &StyleSheet) -> Result<Vec<u8>, DocxError> {
     let mut w = Writer::new(page, styles);
     w.headings = tm_model::headings_by_tab(&doc.content);
+    w.comments = comments::CommentWriter::new(doc);
     for (i, block) in doc.content.iter().enumerate() {
         w.first = i == 0;
         if matches!(block, Block::TabTitle { .. }) {
@@ -63,14 +65,18 @@ pub fn export(doc: &Document, page: &PageSetup, styles: &StyleSheet) -> Result<V
         w.block(block, &Ctx::default());
     }
     let has_notes = w.has_notes;
+    let resolved = w.comments.resolved_paragraphs();
     let mut out = std::io::Cursor::new(Vec::new());
     w.docx
         .build()
         .pack(&mut out)
         .map_err(|e| DocxError::Docx(e.to_string()))?;
-    let bytes = out.into_inner();
+    let mut bytes = out.into_inner();
     if has_notes {
-        return notes::add_note_numbers(&bytes);
+        bytes = notes::add_note_numbers(&bytes)?;
+    }
+    if !resolved.is_empty() {
+        bytes = comments::mark_resolved(&bytes, &resolved)?;
     }
     Ok(bytes)
 }
@@ -117,6 +123,8 @@ struct Writer {
     /// Onglet en cours (index dans `headings`).
     section: usize,
     has_notes: bool,
+    /// Commentaires dans la marge : début et fin de chaque plage.
+    comments: comments::CommentWriter,
 }
 
 /// Espacement Word (vingtièmes de point) d'un style.
@@ -373,6 +381,7 @@ impl Writer {
             headings: Vec::new(),
             section: 0,
             has_notes: false,
+            comments: comments::CommentWriter::default(),
         }
     }
 
@@ -605,35 +614,10 @@ impl Writer {
                     p.add_run(footnote_run(&attrs.content))
                 }
                 Inline::Text { text, marks } => {
+                    p = self.comments.start(p, marks);
                     let run = self.run(text, marks, ctx);
-                    let change = marks.iter().find_map(|m| match m {
-                        Mark::Insertion { attrs } => Some((true, attrs)),
-                        Mark::Deletion { attrs } => Some((false, attrs)),
-                        _ => None,
-                    });
-                    if let Some((inserted, change)) = change {
-                        let author = change.word_author();
-                        let date = if change.date.is_empty() {
-                            "2026-01-01T00:00:00Z"
-                        } else {
-                            &change.date
-                        };
-                        p = if inserted {
-                            p.add_insert(Insert::new(run).author(&author).date(date))
-                        } else {
-                            p.add_delete(Delete::new().author(&author).date(date).add_run(run))
-                        };
-                        continue;
-                    }
-                    match marks.iter().find_map(|m| match m {
-                        Mark::Link { attrs } => Some(attrs.href.clone()),
-                        _ => None,
-                    }) {
-                        Some(href) => p.add_hyperlink(
-                            Hyperlink::new(href, HyperlinkType::External).add_run(run),
-                        ),
-                        None => p.add_run(run),
-                    }
+                    let p = self.write_text(p, run, marks);
+                    self.comments.end(p, marks)
                 }
             };
         }
@@ -649,6 +633,37 @@ impl Writer {
             );
         }
         p
+    }
+
+    /// Un morceau de texte : suggestion, lien, ou texte simple.
+    fn write_text(&self, p: Paragraph, run: Run, marks: &[Mark]) -> Paragraph {
+        let change = marks.iter().find_map(|m| match m {
+            Mark::Insertion { attrs } => Some((true, attrs)),
+            Mark::Deletion { attrs } => Some((false, attrs)),
+            _ => None,
+        });
+        if let Some((inserted, change)) = change {
+            let author = change.word_author();
+            let date = if change.date.is_empty() {
+                "2026-01-01T00:00:00Z"
+            } else {
+                &change.date
+            };
+            return if inserted {
+                p.add_insert(Insert::new(run).author(&author).date(date))
+            } else {
+                p.add_delete(Delete::new().author(&author).date(date).add_run(run))
+            };
+        }
+        match marks.iter().find_map(|m| match m {
+            Mark::Link { attrs } => Some(attrs.href.clone()),
+            _ => None,
+        }) {
+            Some(href) => {
+                p.add_hyperlink(Hyperlink::new(href, HyperlinkType::External).add_run(run))
+            }
+            None => p.add_run(run),
+        }
     }
 
     fn run(&self, text: &str, marks: &[Mark], ctx: &Ctx) -> Run {
@@ -702,7 +717,10 @@ impl Writer {
                 Mark::Strike => run.strike(),
                 Mark::Code => run.fonts(fonts("Courier New")),
                 Mark::Link { .. } => run.color("1155CC").underline("single"),
-                Mark::CharStyle { .. } | Mark::Insertion { .. } | Mark::Deletion { .. } => run,
+                Mark::CharStyle { .. }
+                | Mark::Insertion { .. }
+                | Mark::Deletion { .. }
+                | Mark::Comment { .. } => run,
                 Mark::Superscript => {
                     run.run_property = run.run_property.vert_align(VertAlignType::SuperScript);
                     run
@@ -1311,5 +1329,92 @@ mod import_tests {
             if text == "un ajout" && matches!(&marks[..], [Mark::Insertion { attrs }] if attrs.author == "Alice"))), "{content:?}");
         assert!(content.iter().any(|i| matches!(i, Inline::Text { text, marks }
             if text == "un retrait" && matches!(&marks[..], [Mark::Deletion { attrs }] if attrs.author == "Bob" && attrs.level == Some(3)))), "{content:?}");
+    }
+
+    fn commented(text: &str, attrs: &tm_model::CommentAttrs) -> Inline {
+        Inline::Text {
+            text: text.into(),
+            marks: vec![Mark::Comment {
+                attrs: attrs.clone(),
+            }],
+        }
+    }
+
+    #[test]
+    fn commentaires_aller_retour() {
+        use tm_model::{CommentAttrs, CommentReply};
+        let thread = CommentAttrs {
+            id: "a".into(),
+            author: "Alice".into(),
+            date: "2026-11-22T10:00:00Z".into(),
+            text: "À revoir\nDeuxième ligne".into(),
+            replies: vec![CommentReply {
+                author: "Bob".into(),
+                date: "2026-11-22T11:00:00Z".into(),
+                text: "D'accord".into(),
+            }],
+            resolved: false,
+        };
+        let done = CommentAttrs {
+            id: "b".into(),
+            author: "Alice".into(),
+            date: "2026-11-22T12:00:00Z".into(),
+            text: "Réglé".into(),
+            replies: Vec::new(),
+            resolved: true,
+        };
+        let doc = Document::new(vec![
+            Block::Paragraph {
+                attrs: BlockStyle::default(),
+                content: vec![Inline::text("Avant "), commented("sur deux", &thread)],
+            },
+            Block::Paragraph {
+                attrs: BlockStyle::default(),
+                content: vec![
+                    commented("paragraphes", &thread),
+                    Inline::text(" puis "),
+                    commented("fini", &done),
+                ],
+            },
+        ]);
+        let bytes = export(&doc, &PageSetup::default(), &StyleSheet::default()).unwrap();
+        let xml = tests::document_xml(&bytes);
+        assert_eq!(xml.matches("<w:commentRangeStart").count(), 3, "{xml}");
+        assert_eq!(xml.matches("<w:commentRangeEnd").count(), 3, "{xml}");
+        let mut zip = tests::zip_reader(&bytes);
+        let mut ext = String::new();
+        std::io::Read::read_to_string(
+            &mut zip.by_name("word/commentsExtended.xml").unwrap(),
+            &mut ext,
+        )
+        .unwrap();
+        assert!(ext.contains("w15:paraIdParent"), "{ext}");
+        assert_eq!(ext.matches("w15:done=\"1\"").count(), 1, "{ext}");
+
+        let (back, _, _) = import(&bytes).unwrap();
+        let mut found: Vec<(String, CommentAttrs)> = Vec::new();
+        for block in &back.content {
+            if let Block::Paragraph { content, .. } = block {
+                for inline in content {
+                    if let Inline::Text { text, marks } = inline {
+                        for m in marks {
+                            if let Mark::Comment { attrs } = m {
+                                found.push((text.clone(), attrs.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(found.len(), 3, "{back:?}");
+        assert_eq!(found[0].0, "sur deux");
+        assert_eq!(found[0].1.text, "À revoir\nDeuxième ligne");
+        assert_eq!(found[0].1.author, "Alice");
+        assert_eq!(found[0].1.replies.len(), 1);
+        assert_eq!(found[0].1.replies[0].text, "D'accord");
+        assert_eq!(found[1].1.id, found[0].1.id);
+        assert!(!found[0].1.resolved);
+        assert_eq!(found[2].0, "fini");
+        assert!(found[2].1.resolved);
     }
 }

@@ -5,16 +5,16 @@
 //! Ce qui n'a pas d'équivalent dans Text Machine (zones de texte, notes,
 //! commentaires…) est ignoré, mais leur texte est gardé quand c'est possible.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use base64::Engine;
 use serde_json::Value;
 use tm_model::{
-    Block, BlockStyle, CellAttrs, ChangeAttrs, CharStyleAttrs, CustomStyle, Document,
-    FootnoteAttrs, HeadingAttrs, HighlightAttrs, ImageAttrs, Inline, LinkAttrs, Margins, Mark,
-    OrderedListAttrs, PageSetup, PageSize, ParagraphStyle, StyleKind, StyleSheet, TabTitleAttrs,
-    TaskItemAttrs, TextStyleAttrs, MAX_TAB_LEVEL,
+    Block, BlockStyle, CellAttrs, ChangeAttrs, CharStyleAttrs, CommentAttrs, CommentReply,
+    CustomStyle, Document, FootnoteAttrs, HeadingAttrs, HighlightAttrs, ImageAttrs, Inline,
+    LinkAttrs, Margins, Mark, OrderedListAttrs, PageSetup, PageSize, ParagraphStyle, StyleKind,
+    StyleSheet, TabTitleAttrs, TaskItemAttrs, TextStyleAttrs, MAX_TAB_LEVEL,
 };
 
 use crate::DocxError;
@@ -198,6 +198,12 @@ struct Reader {
     /// Texte des notes de bas de page, par identifiant Word.
     notes: HashMap<String, String>,
     note_count: Cell<usize>,
+    /// Discussions du fichier (commentaire et réponses), par numéro Word
+    /// du premier commentaire ; une réponse renvoie à son commentaire.
+    comments: HashMap<u64, CommentAttrs>,
+    reply_of: HashMap<u64, u64>,
+    /// Discussions dont la plage est ouverte à l'endroit lu.
+    open_comments: RefCell<Vec<CommentAttrs>>,
 }
 
 /// Un bloc lu, avant de regrouper les éléments de liste.
@@ -287,7 +293,91 @@ impl Reader {
             default_font: defaults["fonts"]["ascii"].as_str().map(str::to_string),
             notes: HashMap::new(),
             note_count: Cell::new(0),
+            comments: HashMap::new(),
+            reply_of: HashMap::new(),
+            open_comments: RefCell::new(Vec::new()),
         }
+        .with_comments(json)
+    }
+
+    /// Lit les commentaires Word : chaque commentaire sans parent ouvre une
+    /// discussion, les autres en sont les réponses (dans l'ordre du fichier).
+    fn with_comments(mut self, json: &Value) -> Self {
+        let mut done: HashMap<String, bool> = HashMap::new();
+        for ex in json["commentsExtended"]["children"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if let Some(id) = ex["paragraphId"].as_str() {
+                done.insert(id.to_string(), ex["done"].as_bool().unwrap_or(false));
+            }
+        }
+        let list = json["comments"]["comments"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let paragraphs = |c: &Value| -> Vec<Value> {
+            c["children"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|p| p["type"] == "paragraph")
+                .map(|p| p["data"].clone())
+                .collect()
+        };
+        let text_of = |c: &Value| -> String {
+            paragraphs(c)
+                .iter()
+                .map(plain_text_of)
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string()
+        };
+        for c in &list {
+            if !c["parentCommentId"].is_null() {
+                continue;
+            }
+            let Some(id) = c["id"].as_u64() else { continue };
+            let resolved = paragraphs(c).iter().any(|p| {
+                p["id"]
+                    .as_str()
+                    .and_then(|i| done.get(i))
+                    .copied()
+                    .unwrap_or(false)
+            });
+            self.comments.insert(
+                id,
+                CommentAttrs {
+                    id: format!("c{id}"),
+                    author: c["author"].as_str().unwrap_or_default().to_string(),
+                    date: c["date"].as_str().unwrap_or_default().to_string(),
+                    text: text_of(c),
+                    replies: Vec::new(),
+                    resolved,
+                },
+            );
+        }
+        for c in &list {
+            let (Some(id), Some(mut parent)) = (c["id"].as_u64(), c["parentCommentId"].as_u64())
+            else {
+                continue;
+            };
+            // Réponse à une réponse : rattachée à la discussion.
+            while let Some(&p) = self.reply_of.get(&parent) {
+                parent = p;
+            }
+            if let Some(thread) = self.comments.get_mut(&parent) {
+                thread.replies.push(CommentReply {
+                    author: c["author"].as_str().unwrap_or_default().to_string(),
+                    date: c["date"].as_str().unwrap_or_default().to_string(),
+                    text: text_of(c),
+                });
+                self.reply_of.insert(id, parent);
+            }
+        }
+        self
     }
 
     /// Du texte d'un morceau, avec les appels de note (repères posés par
@@ -507,6 +597,21 @@ impl Reader {
                     self.paragraph_child(c, &marks, inlines, pieces);
                 }
             }
+            Some("commentRangeStart") => {
+                if let Some(thread) = data["id"].as_u64().and_then(|id| self.comments.get(&id)) {
+                    let mut open = self.open_comments.borrow_mut();
+                    if !open.iter().any(|c| c.id == thread.id) {
+                        open.push(thread.clone());
+                    }
+                }
+            }
+            Some("commentRangeEnd") => {
+                if let Some(thread) = data["id"].as_u64().and_then(|id| self.comments.get(&id)) {
+                    self.open_comments
+                        .borrow_mut()
+                        .retain(|c| c.id != thread.id);
+                }
+            }
             // Suivi des modifications : des suggestions dans Text Machine.
             Some(kind @ ("insert" | "delete")) => {
                 let attrs = ChangeAttrs::from_word_author(
@@ -541,6 +646,11 @@ impl Reader {
         let in_link = outer.iter().any(|m| matches!(m, Mark::Link { .. }));
         let mut marks = outer.to_vec();
         marks.extend(self.run_marks(&data["runProperty"], in_link));
+        for thread in self.open_comments.borrow().iter() {
+            marks.push(Mark::Comment {
+                attrs: thread.clone(),
+            });
+        }
         for c in data["children"].as_array().into_iter().flatten() {
             let d = &c["data"];
             match c["type"].as_str() {
@@ -819,6 +929,39 @@ fn push_toc(out: &mut Vec<Item>) {
     if !matches!(out.last(), Some(Item::Block(Block::TableOfContents))) {
         out.push(Item::Block(Block::TableOfContents));
     }
+}
+
+/// Le texte d'un paragraphe de commentaire (sauts de ligne compris).
+fn plain_text_of(value: &Value) -> String {
+    fn walk(v: &Value, out: &mut String) {
+        match v {
+            Value::Object(map) => {
+                match map.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(t) = map.get("data").and_then(|d| d["text"].as_str()) {
+                            out.push_str(t);
+                        }
+                        return;
+                    }
+                    Some("break") => {
+                        out.push('\n');
+                        return;
+                    }
+                    _ => {}
+                }
+                for (key, child) in map {
+                    if key == "children" || key == "data" {
+                        walk(child, out);
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|i| walk(i, out)),
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    walk(value, &mut out);
+    out
 }
 
 fn push_text(inlines: &mut Vec<Inline>, text: &str, marks: &[Mark]) {

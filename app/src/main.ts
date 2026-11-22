@@ -23,6 +23,10 @@ import { collectNotes } from "./extensions/footnote";
 import { refreshTocs } from "./extensions/toc";
 import { Suggestions, changeAt, listChanges } from "./extensions/suggestions";
 import { NotesView } from "./notes";
+import { CommentsView } from "./comments";
+import { CommentFocus } from "./extensions/comments";
+import { FocusParagraph } from "./extensions/focus-paragraph";
+import { FocusMode, toggleFullscreen, isFullscreen } from "./focus";
 import { CompareView } from "./compare";
 import { choiceLabel, facesOf, initFonts, onFontsChange, openFontPicker, type FontChoice } from "./fonts";
 import { MAX_TAB_LEVEL, TabTree, type TabData, type TabNode } from "./tabs";
@@ -122,6 +126,8 @@ let revisionLevel = Number(prefs.get("revisionLevel", "1")) || 1;
 let notesView: NotesView | null = null;
 let marginsView: MarginsView | null = null;
 let compare: CompareView | null = null;
+let commentsView: CommentsView | null = null;
+let focusMode: FocusMode | null = null;
 
 /** Numéro de page d'une position (tables des matières), null sans pages. */
 function pageOf(ed: Editor, pos: number): number | null {
@@ -140,11 +146,15 @@ const editor = new Editor({
   extensions: [
     ...documentExtensions({ pageOf }),
     Suggestions.configure({ isOn: () => suggesting, author: () => authorName, level: () => revisionLevel }),
+    CommentFocus,
+    FocusParagraph.configure({ isOn: () => !!focusMode?.on && focusMode.paragraph }),
     Search,
     Pagination.configure({
-      getSetup: () => (forcePaged ? { ...pageSetup, pageless: false } : pageSetup),
+      getSetup: () =>
+        forcePaged ? { ...pageSetup, pageless: false } : focusMode?.on ? { ...pageSetup, pageless: true } : pageSetup,
       onLayout: (pages, notePages) => {
         drawSheets(pages);
+        commentsView?.schedule();
         notesView?.setPages(notePages);
         refreshTocs();
       },
@@ -176,6 +186,7 @@ const editor = new Editor({
   onTransaction: () => {
     refreshToolbar();
     refreshChangeBubble();
+    focusMode?.update();
   },
   onBlur: () => window.setTimeout(refreshChangeBubble, 0),
   onFocus: () => refreshChangeBubble(),
@@ -195,6 +206,7 @@ const tabs = new TabTree(
     updateCounts();
     $("#desk").scrollTop = 0;
     compare?.showTab();
+    commentsView?.schedule();
   },
   () => {
     markDirty();
@@ -945,7 +957,8 @@ const printStyle = document.head.appendChild(document.createElement("style"));
 let zoom = Number(prefs.get("zoom", "1")) || 1;
 let pageCount = 1;
 
-const isPageless = () => pageSetup.pageless && !forcePaged;
+// Sans distraction : toujours sans pagination (le texte seul, en continu).
+const isPageless = () => (pageSetup.pageless || !!focusMode?.on) && !forcePaged;
 
 // En-têtes et pieds de page, modifiables directement dans les marges.
 marginsView = new MarginsView(paper, {
@@ -1047,9 +1060,19 @@ function leavePages() {
 
 /** En comparaison, les deux pages doivent tenir côte à côte : zoom réduit si besoin. */
 function shownZoom() {
-  if (!compare?.isOpen) return zoom;
-  const available = (desk.clientWidth - 32) / pageSizePx(pageSetup).width;
-  return Math.max(0.3, Math.min(zoom, Math.floor(available * 20) / 20));
+  if (compare?.isOpen) {
+    const available = (desk.clientWidth - 32) / pageSizePx(pageSetup).width;
+    return Math.max(0.3, Math.min(zoom, Math.floor(available * 20) / 20));
+  }
+  // Commentaires : la page et la marge des commentaires doivent tenir dans
+  // la fenêtre (les cartes peuvent empiéter sur la marge droite de la page).
+  if (desk.classList.contains("with-comments") && !focusMode?.on) {
+    const overlap = Math.min(80, Math.max(0, mmToPx(pageSetup.margins.right) - 12));
+    const need = pageSizePx(pageSetup).width + 260 - overlap;
+    const available = (desk.clientWidth - 32) / need;
+    return Math.max(0.5, Math.min(zoom, Math.floor(available * 20) / 20));
+  }
+  return zoom;
 }
 
 function setZoom(value: number) {
@@ -1660,6 +1683,15 @@ setupMenubar($("#menubar"), [
         action: () => setPanelVisible(sidePanel.hidden),
       },
       { label: "Afficher le nombre de mots", checked: showWordBox, action: () => setShowWordBox(!showWordBox) },
+      {
+        label: "Commentaires résolus",
+        checked: !!commentsView?.showResolved,
+        disabled: !commentsView?.resolvedCount && !commentsView?.showResolved,
+        action: () => commentsView?.setShowResolved(!commentsView.showResolved),
+      },
+      SEP,
+      { label: "Plein écran", shortcut: "⌃⌘F", checked: document.body.classList.contains("fullscreen"), action: toggleFullscreen },
+      { label: "Mode sans distraction", shortcut: "⇧⌘D", checked: !!focusMode?.on, action: () => focusMode?.toggle() },
       SEP,
       {
         label: "Zoom",
@@ -1681,6 +1713,7 @@ setupMenubar($("#menubar"), [
       { label: "Saut de page", shortcut: "⌘↩", action: () => chain().setPageBreak().run() },
       { label: "Date du jour", action: insertDate },
       SEP,
+      { label: "Commentaire", shortcut: "⌥⌘M", action: () => commentsView?.start() },
       { label: "Note de bas de page", shortcut: "⌥⌘F", action: insertFootnote },
       { label: "Table des matières", action: () => chain().insertTableOfContents().run() },
       { label: "En-tête", action: () => editMargin("header") },
@@ -1814,7 +1847,20 @@ const actions: Record<string, () => unknown> = {
   superscript: () => chain().unsetSubscript().toggleSuperscript().run(),
   subscript: () => chain().unsetSuperscript().toggleSubscript().run(),
   link: openLinkDialog,
-  clearFormat: () => chain().unsetAllMarks().unsetTextAlign().setBlockLineHeight(null).run(),
+  // Les commentaires ne sont pas de la mise en forme : ils restent.
+  clearFormat: () =>
+    chain()
+      .command(({ tr, state }) => {
+        const { from, to } = state.selection;
+        for (const type of Object.values(state.schema.marks)) {
+          if (type.name !== "comment") tr.removeMark(from, to, type);
+        }
+        return true;
+      })
+      .unsetTextAlign()
+      .setBlockLineHeight(null)
+      .run(),
+  comment: () => commentsView?.start(),
   alignLeft: () => chain().setTextAlign("left").run(),
   alignCenter: () => chain().setTextAlign("center").run(),
   alignRight: () => chain().setTextAlign("right").run(),
@@ -2052,6 +2098,22 @@ window.addEventListener("keydown", (event) => {
     insertFootnote();
     return;
   }
+  if (event.code === "KeyM" && event.altKey && !event.shiftKey) {
+    event.preventDefault();
+    commentsView?.start();
+    return;
+  }
+  if (event.code === "KeyD" && event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    void focusMode?.toggle();
+    return;
+  }
+  // ⌃⌘F : plein écran (comme les autres applications du Mac).
+  if (event.code === "KeyF" && event.ctrlKey && event.metaKey) {
+    event.preventDefault();
+    void toggleFullscreen();
+    return;
+  }
   if (key === "s") {
     event.preventDefault();
     if (event.shiftKey) saveFileAs();
@@ -2099,6 +2161,45 @@ desk.addEventListener("mousedown", (event) => {
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeMenus();
+});
+
+// F11 : plein écran (Windows).
+window.addEventListener("keydown", (event) => {
+  if (event.key === "F11") {
+    event.preventDefault();
+    void toggleFullscreen();
+  }
+});
+// Sortie du plein écran par le bouton vert ou Échap : la coche suit.
+window.addEventListener("resize", () =>
+  void isFullscreen().then((on) => document.body.classList.toggle("fullscreen", on)),
+);
+
+// --- Commentaires dans la marge, mode sans distraction ------------------------------
+
+commentsView = new CommentsView(editor, paper, desk, {
+  author: () => authorName,
+  // La marge des commentaires apparaît ou disparaît : le zoom affiché peut changer.
+  onLayoutChange: () => setZoom(zoom),
+});
+
+focusMode = new FocusMode({
+  scroller: desk,
+  onChange: () => {
+    applyPageSetup();
+    refreshPagination(editor.view);
+    commentsView?.schedule();
+    editor.commands.focus();
+  },
+  redraw: () => editor.view.dispatch(editor.state.tr.setMeta("addToHistory", false)),
+  words: () => plural(tabStats.words, "mot"),
+  caretTop: () => {
+    try {
+      return editor.view.coordsAtPos(editor.state.selection.head).top;
+    } catch {
+      return null;
+    }
+  },
 });
 
 // --- Notes de bas de page ---------------------------------------------------------
@@ -2260,7 +2361,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("#change-bubbl
 }
 desk.addEventListener("scroll", () => refreshChangeBubble(), { passive: true });
 window.addEventListener("resize", () => {
-  if (compare?.isOpen) setZoom(zoom);
+  if (compare?.isOpen || desk.classList.contains("with-comments")) setZoom(zoom);
 });
 
 // --- Versions et comparaison côte à côte --------------------------------------------
