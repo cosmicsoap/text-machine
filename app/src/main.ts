@@ -58,6 +58,7 @@ import {
 import { ICONS } from "./icons";
 import { SEP, closeMenus, popup, setupMenubar, type MenuItem } from "./menus";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { localizeShortcutTitles } from "./platform";
 
@@ -1457,6 +1458,17 @@ async function restoreSession() {
   }
 }
 
+/**
+ * Fichiers ouverts d'un double-clic (ou « Ouvrir avec » Text Machine) : au
+ * lancement, ou pendant que l'app tourne. Une seule fenêtre : on ouvre le
+ * dernier reçu.
+ */
+async function openRequestedFiles(): Promise<void> {
+  const paths = await invoke<string[]>("take_opened_files").catch(() => [] as string[]);
+  const last = paths.at(-1);
+  if (last) await openPath(last);
+}
+
 // Fermeture de la fenêtre : on enregistre ce qui ne l'est pas encore.
 window.addEventListener("beforeunload", () => {
   if (dirty) autosave();
@@ -1974,7 +1986,8 @@ setPanelVisible(prefs.get("panel", "1") === "1");
 refreshToolbar();
 toolbar.querySelector('[data-action="spellcheck"]')?.classList.add("active");
 updateCounts();
-restoreSession();
+void listen("open-files", () => openRequestedFiles()).catch(() => {});
+restoreSession().then(openRequestedFiles);
 onFontsChange(() => {
   if (stylesDialog.open) renderStyleDialog();
   refreshToolbar();
