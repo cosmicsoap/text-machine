@@ -6,20 +6,10 @@
 // panneau des onglets et du plan à gauche, pages au centre.
 
 import { Editor, createDocument, type JSONContent } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import { TextStyleKit } from "@tiptap/extension-text-style";
-import TextAlign from "@tiptap/extension-text-align";
-import Highlight from "@tiptap/extension-highlight";
-import Subscript from "@tiptap/extension-subscript";
-import Superscript from "@tiptap/extension-superscript";
-import { TaskList, TaskItem } from "@tiptap/extension-list";
-import { TableKit } from "@tiptap/extension-table";
-import Image from "@tiptap/extension-image";
 import FileHandler from "@tiptap/extension-file-handler";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import {
   DEFAULT_PAGE_SETUP,
-  PageBreak,
   Pagination,
   SCREEN_GAP_PX,
   mmToPx,
@@ -28,8 +18,12 @@ import {
   type PageSetup,
 } from "./extensions/pagination";
 import { Search, getSearchState } from "./extensions/search";
-import { ParagraphFormat } from "./extensions/paragraph-format";
-import { CharStyle, CustomParagraphStyle, FontWeight } from "./extensions/custom-styles";
+import { documentExtensions } from "./schema";
+import { collectNotes } from "./extensions/footnote";
+import { refreshTocs } from "./extensions/toc";
+import { Suggestions, changeAt, listChanges } from "./extensions/suggestions";
+import { NotesView } from "./notes";
+import { CompareView } from "./compare";
 import { choiceLabel, facesOf, initFonts, onFontsChange, openFontPicker, type FontChoice } from "./fonts";
 import { MAX_TAB_LEVEL, TabTree, type TabData, type TabNode } from "./tabs";
 import {
@@ -116,36 +110,39 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-icon]")) {
   el.insertAdjacentHTML("afterbegin", ICONS[el.dataset.icon!] ?? "");
 }
 
+/** Mode suggestion : les modifications sont proposées, pas appliquées. */
+let suggesting = false;
+/** Nom affiché sur les suggestions. */
+let authorName = prefs.get("author", "Moi");
+let notesView: NotesView | null = null;
+let compare: CompareView | null = null;
+
+/** Numéro de page d'une position (tables des matières), null sans pages. */
+function pageOf(ed: Editor, pos: number): number | null {
+  if (isPageless()) return null;
+  const dom = ed.view.nodeDOM(pos) as HTMLElement | null;
+  if (!dom?.getBoundingClientRect) return null;
+  const { width, height } = pageSizePx(pageSetup);
+  const paperRect = paper.getBoundingClientRect();
+  const scale = paperRect.width > 0 ? paperRect.width / width : 1;
+  const top = (dom.getBoundingClientRect().top - paperRect.top) / scale;
+  return Math.max(1, Math.floor(top / (height + SCREEN_GAP_PX)) + 1);
+}
+
 const editor = new Editor({
   element: $("#editor"),
   extensions: [
-    StarterKit.configure({
-      heading: { levels: [1, 2, 3, 4] },
-      // Un clic sur un lien ne doit pas quitter l'éditeur.
-      link: { openOnClick: false, autolink: true, defaultProtocol: "https" },
-    }),
-    // Police, taille, couleur du texte (lineHeight se règle par paragraphe).
-    TextStyleKit.configure({ lineHeight: false }),
-    Highlight.configure({ multicolor: true }),
-    TextAlign.configure({ types: ["heading", "paragraph"] }),
-    Subscript,
-    Superscript,
-    TaskList,
-    TaskItem.configure({ nested: true }),
-    ParagraphFormat,
-    CustomParagraphStyle,
-    CharStyle,
-    FontWeight,
-    PageBreak,
+    ...documentExtensions({ pageOf }),
+    Suggestions.configure({ isOn: () => suggesting, author: () => authorName }),
     Search,
     Pagination.configure({
       getSetup: () => (forcePaged ? { ...pageSetup, pageless: false } : pageSetup),
-      onLayout: (pages) => drawSheets(pages),
-    }),
-    TableKit.configure({ table: { resizable: true } }),
-    Image.configure({
-      allowBase64: true,
-      resize: { enabled: true, alwaysPreserveAspectRatio: true, minWidth: 40, minHeight: 40 },
+      onLayout: (pages, notePages) => {
+        drawSheets(pages);
+        notesView?.setPages(notePages);
+        refreshTocs();
+      },
+      noteHeight: (content, index) => notesView?.height(content, index) ?? 0,
     }),
     // Images collées (⌘V) ou glissées dans la page.
     FileHandler.configure({
@@ -164,12 +161,18 @@ const editor = new Editor({
     markDirty();
     scheduleCounts();
     schedulePanel();
+    compare?.schedule();
   },
   onSelectionUpdate: () => {
     refreshToolbar();
     scheduleCounts();
   },
-  onTransaction: () => refreshToolbar(),
+  onTransaction: () => {
+    refreshToolbar();
+    refreshChangeBubble();
+  },
+  onBlur: () => window.setTimeout(refreshChangeBubble, 0),
+  onFocus: () => refreshChangeBubble(),
 });
 
 const chain = () => editor.chain().focus();
@@ -185,6 +188,7 @@ const tabs = new TabTree(
     renderPanel();
     updateCounts();
     $("#desk").scrollTop = 0;
+    compare?.showTab();
   },
   () => {
     markDirty();
@@ -377,7 +381,10 @@ const styleElement = document.head.appendChild(document.createElement("style"));
 
 function setStyles(next: StyleSheet, dirty = true) {
   styles = normalizeStyles(next);
-  styleElement.textContent = stylesToCss(styles);
+  styleElement.textContent = stylesToCss(styles) + "\n" + stylesToCss(styles, "#compare-editor .tiptap");
+  // Les notes de bas de page prennent la police du texte normal.
+  document.documentElement.style.setProperty("--tm-font", getComputedStyle(editor.view.dom).fontFamily);
+  notesView?.invalidate();
   renderStyleSelect();
   if (dirty) markDirty();
   refreshToolbar();
@@ -897,6 +904,7 @@ function applyPageSetup() {
   paper.style.setProperty("--m-right", `${mmToPx(m.right)}px`);
   paper.classList.toggle("pageless", isPageless());
   lastPages = -1;
+  compare?.copyPage();
 }
 
 let lastPages = -1;
@@ -965,9 +973,17 @@ function leavePages() {
   refreshPagination(editor.view);
 }
 
+/** En comparaison, les deux pages doivent tenir côte à côte : zoom réduit si besoin. */
+function shownZoom() {
+  if (!compare?.isOpen) return zoom;
+  const available = (desk.clientWidth - 32) / pageSizePx(pageSetup).width;
+  return Math.max(0.3, Math.min(zoom, Math.floor(available * 20) / 20));
+}
+
 function setZoom(value: number) {
   zoom = Math.min(3, Math.max(0.3, value));
-  paper.style.setProperty("zoom", String(zoom));
+  paper.style.setProperty("zoom", String(shownZoom()));
+  compare?.copyPage();
   prefs.set("zoom", String(zoom));
   const select = $<HTMLSelectElement>("#zoom");
   if (![...select.options].some((o) => Number(o.value) === zoom)) {
@@ -1179,6 +1195,12 @@ async function autosave() {
 async function writeFile(path: string) {
   setSaveStatus("Enregistrement…");
   await invoke("save_document", { path, file: fileData() });
+  // Nouveau nom (premier enregistrement, « Enregistrer sous ») : les
+  // versions suivent le document.
+  if (path !== currentPath) {
+    await invoke("copy_versions", { from: currentPath, to: path }).catch(() => {});
+    window.setTimeout(refreshVersions, 0);
+  }
   dirty = false;
   setPath(path);
   setSaveStatus(savedLabel(path));
@@ -1193,6 +1215,7 @@ function savedLabel(path: string) {
 }
 
 function loadFile(file: NativeFile, path: string | null) {
+  compare?.close();
   loading = true;
   tabs.load(file.tabs);
   setStyles(file.styles ?? DEFAULT_STYLES, false);
@@ -1200,6 +1223,7 @@ function loadFile(file: NativeFile, path: string | null) {
   loading = false;
   dirty = false;
   setPath(path);
+  refreshVersions();
   setSaveStatus(path ? savedLabel(path) : "");
   updateCounts();
   renderPanel();
@@ -1518,6 +1542,8 @@ setupMenubar($("#menubar"), [
       { label: "Enregistrer sous…", shortcut: "⇧⌘S", action: saveFileAs },
       { label: "Exporter", submenu: exportMenu() },
       SEP,
+      { label: "Versions", submenu: versionsMenu() },
+      SEP,
       { label: "Mise en page…", action: openPageDialog },
       { label: "Imprimer…", shortcut: "⌘P", action: printDocument },
     ],
@@ -1566,6 +1592,9 @@ setupMenubar($("#menubar"), [
       { label: "Ligne horizontale", action: () => chain().setHorizontalRule().run() },
       { label: "Saut de page", shortcut: "⌘↩", action: () => chain().setPageBreak().run() },
       { label: "Date du jour", action: insertDate },
+      SEP,
+      { label: "Note de bas de page", shortcut: "⌥⌘F", action: insertFootnote },
+      { label: "Table des matières", action: () => chain().insertTableOfContents().run() },
       SEP,
       { label: "Onglet", action: () => tabs.add({ afterId: tabs.activeId }) },
       {
@@ -1631,6 +1660,9 @@ setupMenubar($("#menubar"), [
     items: () => [
       { label: "Nombre de mots…", shortcut: "⇧⌘C", action: openCountDialog },
       { label: "Correcteur orthographique", checked: (editor.view.dom as HTMLElement).spellcheck, action: toggleSpellcheck },
+      SEP,
+      { label: "Suggestions", submenu: suggestionsMenu() },
+      { label: "Comparer avec l'original", action: compareWithOriginal },
       SEP,
       { label: "Modifier les styles…", action: () => openStylesDialog() },
       { label: "Polices…", action: openToolbarFonts },
@@ -1914,6 +1946,16 @@ window.addEventListener("keydown", (event) => {
     applyStyle(n === 0 ? "normal" : n === 4 ? "title" : styleOfLevel(n + 1));
     return;
   }
+  if (event.code === "KeyX" && event.altKey && event.shiftKey) {
+    event.preventDefault();
+    setSuggesting(!suggesting);
+    return;
+  }
+  if (event.code === "KeyF" && event.altKey && !event.shiftKey) {
+    event.preventDefault();
+    insertFootnote();
+    return;
+  }
   if (key === "s") {
     event.preventDefault();
     if (event.shiftKey) saveFileAs();
@@ -1962,6 +2004,306 @@ desk.addEventListener("mousedown", (event) => {
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeMenus();
 });
+
+// --- Notes de bas de page ---------------------------------------------------------
+
+notesView = new NotesView(editor, paper, isPageless);
+
+function insertFootnote() {
+  const before = collectNotes(editor.state.doc).length;
+  chain().insertFootnote().run();
+  // La nouvelle note : celle dont le numéro est juste avant le curseur.
+  const pos = editor.state.selection.from - 1;
+  const index = collectNotes(editor.state.doc).findIndex((n) => n.pos === pos);
+  notesView?.focus(index >= 0 ? index : before);
+}
+
+// --- Petite fenêtre « nom » (version, auteur des suggestions) ---------------------
+
+const textDialog = $<HTMLDialogElement>("#text-dialog");
+const textInput = $<HTMLInputElement>("#text-input");
+
+function askText(title: string, label: string, value: string, ok: string): Promise<string | null> {
+  $("#text-title").textContent = title;
+  $("#text-label").textContent = label;
+  $<HTMLButtonElement>("#text-ok").textContent = ok;
+  textInput.value = value;
+  textDialog.returnValue = "";
+  textDialog.showModal();
+  textInput.select();
+  return new Promise((resolve) => {
+    textDialog.addEventListener(
+      "close",
+      () => {
+        const text = textInput.value.trim();
+        resolve(textDialog.returnValue === "ok" && text ? text : null);
+        editor.commands.focus();
+      },
+      { once: true },
+    );
+  });
+}
+
+// --- Mode suggestion --------------------------------------------------------------
+
+const modeSelect = $<HTMLSelectElement>("#edit-mode");
+
+function setSuggesting(on: boolean) {
+  suggesting = on;
+  modeSelect.value = on ? "suggest" : "edit";
+  document.body.classList.toggle("suggesting", on);
+  setSaveStatus(on ? "Mode suggestion : vos modifications seront proposées" : "");
+  editor.commands.focus();
+}
+
+modeSelect.addEventListener("change", () => setSuggesting(modeSelect.value === "suggest"));
+
+async function askAuthor() {
+  const name = await askText("Suggestions", "Votre nom (affiché sur vos suggestions)", authorName, "OK");
+  if (!name) return;
+  authorName = name;
+  prefs.set("author", name);
+}
+
+function resolveAll(accept: boolean) {
+  const n = listChanges(editor.state.doc).length;
+  if (!n) return;
+  if (accept) chain().acceptAllChanges().run();
+  else chain().rejectAllChanges().run();
+}
+
+function suggestionsMenu(): MenuItem[] {
+  const changes = listChanges(editor.state.doc).length;
+  return [
+    { label: "Mode suggestion", shortcut: "⌥⇧⌘X", checked: suggesting, action: () => setSuggesting(!suggesting) },
+    SEP,
+    { label: `Accepter toutes les suggestions${changes ? ` (${changes})` : ""}`, disabled: !changes, action: () => resolveAll(true) },
+    { label: "Refuser toutes les suggestions", disabled: !changes, action: () => resolveAll(false) },
+    SEP,
+    { label: `Votre nom : ${authorName}…`, action: askAuthor },
+  ];
+}
+
+// Bulle « Accepter / Refuser » quand le curseur est dans une suggestion.
+const DATE_FORMAT = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+function refreshChangeBubble() {
+  const bubble = document.getElementById("change-bubble");
+  if (!bubble) return;
+  const hasFocus = editor.isFocused || bubble.contains(document.activeElement);
+  const change = hasFocus && !busy ? changeAt(editor.state) : null;
+  if (!change) {
+    bubble.hidden = true;
+    return;
+  }
+  const kind = change.kind === "insertion" ? "Ajout" : "Suppression";
+  const date = change.date ? DATE_FORMAT.format(new Date(change.date)) : "";
+  bubble.querySelector(".change-what")!.textContent = `${kind}${change.author ? ` · ${change.author}` : ""}`;
+  bubble.querySelector(".change-date")!.textContent = date;
+  bubble.dataset.from = String(change.from);
+  bubble.dataset.to = String(change.to);
+  bubble.hidden = false;
+  const at = editor.view.coordsAtPos(change.from);
+  const box = bubble.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - box.width - 8, Math.max(8, at.left - 12));
+  const top = at.top - box.height - 8 < 90 ? at.bottom + 8 : at.top - box.height - 8;
+  bubble.style.left = `${left}px`;
+  bubble.style.top = `${top}px`;
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("#change-bubble [data-change]")) {
+  button.addEventListener("mousedown", (e) => e.preventDefault());
+  button.addEventListener("click", () => {
+    const bubble = $("#change-bubble");
+    const from = Number(bubble.dataset.from);
+    const to = Number(bubble.dataset.to);
+    if (button.dataset.change === "accept") chain().acceptChange(from, to).run();
+    else chain().rejectChange(from, to).run();
+  });
+}
+desk.addEventListener("scroll", () => refreshChangeBubble(), { passive: true });
+window.addEventListener("resize", () => {
+  if (compare?.isOpen) setZoom(zoom);
+});
+
+// --- Versions et comparaison côte à côte --------------------------------------------
+
+interface VersionInfo {
+  id: string;
+  name: string;
+  date: string;
+}
+
+let versionList: VersionInfo[] = [];
+const comparePane = $<HTMLElement>("#compare-pane");
+const compareSelect = $<HTMLSelectElement>("#compare-select");
+
+compare = new CompareView({
+  editor,
+  tabs,
+  pane: comparePane,
+  paper: $("#compare-paper"),
+  mainPaper: paper,
+  desk,
+  host: $("#compare-editor"),
+  extensions: () => documentExtensions(),
+  onChange: () => {
+    renderCompareSelect();
+    setZoom(zoom);
+  },
+  showCount: (changes, missing) => {
+    $("#compare-count").textContent = missing
+      ? "Cet onglet n'existe pas dans cette version"
+      : changes === 0
+        ? "Aucune différence"
+        : `${changes.toLocaleString("fr-FR")} ${changes > 1 ? "différences" : "différence"}`;
+  },
+});
+
+const versionDate = (iso: string) =>
+  new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
+
+async function refreshVersions() {
+  versionList = await invoke<VersionInfo[]>("list_versions", { path: currentPath }).catch(() => []);
+  return versionList;
+}
+
+async function saveVersion(name?: string) {
+  const now = new Date();
+  const label =
+    name ?? (await askText("Enregistrer une version", "Nom de la version", `Version du ${versionDate(now.toISOString())}`, "Enregistrer"));
+  if (!label) return null;
+  try {
+    const info = await invoke<VersionInfo>("save_version", {
+      path: currentPath,
+      name: label,
+      date: now.toISOString(),
+      tabs: tabs.toData(),
+    });
+    await refreshVersions();
+    setSaveStatus(`Version enregistrée : ${label}`);
+    return info;
+  } catch (e) {
+    alert(String(e));
+    return null;
+  }
+}
+
+async function compareWithVersion(version: VersionInfo) {
+  try {
+    const data = await invoke<TabData[]>("read_version", { path: currentPath, id: version.id });
+    compare!.open({ label: `${version.name} (${versionDate(version.date)})`, tabs: data, versionId: version.id });
+  } catch (e) {
+    alert(String(e));
+  }
+}
+
+async function compareWithFile() {
+  const path = await open({ multiple: false, filters: OPEN_FILTERS });
+  if (typeof path !== "string") return;
+  try {
+    const file = await invoke<NativeFile>("open_document", { path });
+    compare!.open({ label: fileName(path), tabs: file.tabs });
+  } catch (e) {
+    alert(String(e));
+  }
+}
+
+/** « Original » : la première version, ou une nouvelle si aucune n'existe. */
+async function compareWithOriginal() {
+  const list = await refreshVersions();
+  const original = list[list.length - 1];
+  if (original) return compareWithVersion(original);
+  const ok = await confirmDialog(
+    "Ce document n'a pas encore de version enregistrée. Enregistrer l'état actuel comme original ? Vos prochaines corrections seront comparées à lui.",
+    "Enregistrer l'original",
+  );
+  if (!ok) return;
+  const info = await saveVersion("Original");
+  if (info) await compareWithVersion(info);
+}
+
+async function restoreVersion() {
+  const source = compare?.source;
+  if (!source) return;
+  const ok = await confirmDialog(
+    `Remplacer le texte en cours par « ${source.label} » ? L'état actuel est d'abord enregistré comme version, vous pourrez y revenir.`,
+    "Restaurer",
+  );
+  if (!ok) return;
+  await saveVersion(`Avant restauration (${versionDate(new Date().toISOString())})`);
+  const tabsData = structuredClone(source.tabs);
+  compare?.close();
+  loading = true;
+  tabs.load(tabsData);
+  loading = false;
+  markDirty();
+  renderPanel();
+  updateCounts();
+}
+
+async function deleteVersion(version: VersionInfo) {
+  const ok = await confirmDialog(`Supprimer la version « ${version.name} » ?`, "Supprimer");
+  if (!ok) return;
+  await invoke("delete_version", { path: currentPath, id: version.id }).catch((e) => alert(String(e)));
+  if (compare?.source?.versionId === version.id) compare.close();
+  await refreshVersions();
+}
+
+function renderCompareSelect() {
+  const current = compare?.source;
+  compareSelect.replaceChildren(
+    ...versionList.map((v) => new Option(`${v.name} — ${versionDate(v.date)}`, v.id)),
+    new Option("Un autre fichier…", "__file"),
+  );
+  if (current && !current.versionId) {
+    compareSelect.prepend(new Option(current.label, "__current"));
+    compareSelect.value = "__current";
+  } else if (current?.versionId) {
+    compareSelect.value = current.versionId;
+  }
+}
+
+compareSelect.addEventListener("change", () => {
+  const value = compareSelect.value;
+  if (value === "__file") {
+    renderCompareSelect();
+    compareWithFile();
+    return;
+  }
+  const version = versionList.find((v) => v.id === value);
+  if (version) compareWithVersion(version);
+});
+$("#compare-close").addEventListener("click", () => compare?.close());
+$("#compare-restore").addEventListener("click", restoreVersion);
+
+function versionsMenu(): MenuItem[] {
+  const list = versionList;
+  return [
+    { label: "Enregistrer une version…", action: () => saveVersion() },
+    SEP,
+    { label: "Comparer avec l'original", action: compareWithOriginal },
+    {
+      label: "Comparer avec une version",
+      submenu: list.length
+        ? list.map((v) => ({
+            label: `${v.name} — ${versionDate(v.date)}`,
+            checked: compare?.source?.versionId === v.id,
+            action: () => compareWithVersion(v),
+          }))
+        : [{ label: "Aucune version enregistrée", disabled: true }],
+    },
+    { label: "Comparer avec un autre fichier…", action: compareWithFile },
+    ...(compare?.isOpen ? [{ label: "Fermer la comparaison", action: () => compare?.close() }] : []),
+    SEP,
+    {
+      label: "Supprimer une version",
+      submenu: list.length
+        ? list.map((v) => ({ label: `${v.name} — ${versionDate(v.date)}`, action: () => deleteVersion(v) }))
+        : [{ label: "Aucune version enregistrée", disabled: true }],
+    },
+  ];
+}
 
 // --- Démarrage -----------------------------------------------------------------------
 

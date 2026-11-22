@@ -7,20 +7,93 @@
 //!
 //! Ce que Markdown ne sait pas représenter (couleurs, polices, alignement,
 //! souligné…) est perdu à l'export.
+//!
+//! Notes de bas de page : syntaxe `[^1]` (lue par la plupart des éditeurs).
+//! Suggestions : syntaxe « CriticMarkup » `{++ajout++}` et `{--suppression--}`.
+//! Table des matières : une liste de liens vers les titres, entre deux
+//! commentaires `<!-- text-machine:sommaire -->`, recalculée à l'ouverture.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use tm_model::{
-    Block, BlockStyle, CellAttrs, CodeBlockAttrs, Document, HeadingAttrs, ImageAttrs, Inline,
-    LinkAttrs, Mark, OrderedListAttrs, TabTitleAttrs, TaskItemAttrs,
+    Block, BlockStyle, CellAttrs, ChangeAttrs, CodeBlockAttrs, Document, FootnoteAttrs,
+    HeadingAttrs, ImageAttrs, Inline, LinkAttrs, Mark, OrderedListAttrs, TabTitleAttrs,
+    TaskItemAttrs,
 };
+
+const TOC_START: &str = "<!-- text-machine:sommaire -->";
+const TOC_END: &str = "<!-- /text-machine:sommaire -->";
+
+thread_local! {
+    /// Pendant un export : le texte des notes, dans l'ordre des appels.
+    static NOTES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Pendant un export : les titres de chaque onglet (pour les sommaires).
+    static HEADINGS: RefCell<Vec<Vec<(u8, String)>>> = const { RefCell::new(Vec::new()) };
+}
 
 // --- Export ------------------------------------------------------------------
 
 /// Convertit un document en Markdown.
 pub fn export(doc: &Document) -> String {
-    let mut out = blocks_to_markdown(&doc.content);
+    NOTES.with(|n| n.borrow_mut().clear());
+    HEADINGS.with(|h| *h.borrow_mut() = tm_model::headings_by_tab(&doc.content));
+    let mut parts = Vec::new();
+    let mut section = 0;
+    for block in &doc.content {
+        if matches!(block, Block::TabTitle { .. }) {
+            section += 1;
+        }
+        let md = match block {
+            Block::TableOfContents => Some(toc_markdown(section)),
+            other => block_to_markdown(other),
+        };
+        parts.extend(md);
+    }
+    let mut out = parts.join("\n\n");
+    let notes = NOTES.with(|n| std::mem::take(&mut *n.borrow_mut()));
+    for (i, note) in notes.iter().enumerate() {
+        out.push_str(if i == 0 { "\n\n" } else { "\n" });
+        let body = note.lines().map(escape).collect::<Vec<_>>().join("\n    ");
+        out.push_str(&format!("[^{}]: {body}", i + 1));
+    }
     out.push('\n');
     out
+}
+
+/// Ancre d'un titre, comme GitHub : minuscules, espaces en tirets.
+pub fn slug(text: &str) -> String {
+    text.trim()
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+            _ => None,
+        })
+        .collect()
+}
+
+fn toc_markdown(section: usize) -> String {
+    let headings = HEADINGS.with(|h| h.borrow().get(section).cloned().unwrap_or_default());
+    let min = headings.iter().map(|(l, _)| *l).min().unwrap_or(1);
+    let lines: Vec<String> = headings
+        .iter()
+        .map(|(level, text)| {
+            format!(
+                "{}- [{}](#{})",
+                "  ".repeat((level - min) as usize),
+                escape(text),
+                slug(text)
+            )
+        })
+        .collect();
+    if lines.is_empty() {
+        format!("{TOC_START}\n\n{TOC_END}")
+    } else {
+        format!("{TOC_START}\n\n{}\n\n{TOC_END}", lines.join("\n"))
+    }
 }
 
 /// Convertit un document en texte brut (un paragraphe par ligne).
@@ -69,6 +142,7 @@ fn block_to_markdown(block: &Block) -> Option<String> {
                 .map(|i| match i {
                     Inline::Text { text, .. } => text.as_str(),
                     Inline::HardBreak => "\n",
+                    Inline::Footnote { .. } => "",
                 })
                 .collect();
             let fence = if code.contains("```") { "~~~" } else { "```" };
@@ -95,6 +169,7 @@ fn block_to_markdown(block: &Block) -> Option<String> {
         Block::TableRow { .. } | Block::TableCell { .. } | Block::TableHeader { .. } => {
             return None
         }
+        Block::TableOfContents => toc_markdown(0),
     })
 }
 
@@ -238,12 +313,31 @@ fn inlines_to_markdown(inlines: &[Inline]) -> String {
         match inline {
             Inline::HardBreak => out.push_str("\\\n"),
             Inline::Text { text, marks } => out.push_str(&text_to_markdown(text, marks)),
+            Inline::Footnote { attrs } => {
+                let n = NOTES.with(|n| {
+                    let mut n = n.borrow_mut();
+                    n.push(attrs.content.clone());
+                    n.len()
+                });
+                out.push_str(&format!("[^{n}]"));
+            }
         }
     }
     out
 }
 
 fn text_to_markdown(text: &str, marks: &[Mark]) -> String {
+    let s = styled_markdown(text, marks);
+    if marks.iter().any(|m| matches!(m, Mark::Insertion { .. })) {
+        format!("{{++{s}++}}")
+    } else if marks.iter().any(|m| matches!(m, Mark::Deletion { .. })) {
+        format!("{{--{s}--}}")
+    } else {
+        s
+    }
+}
+
+fn styled_markdown(text: &str, marks: &[Mark]) -> String {
     let has = |f: fn(&Mark) -> bool| marks.iter().any(f);
     if has(|m| matches!(m, Mark::Code)) {
         let ticks = if text.contains('`') { "``" } else { "`" };
@@ -310,8 +404,10 @@ fn escape_line_start(text: &str) -> String {
 /// Lit un texte Markdown.
 pub fn import(markdown: &str) -> Document {
     let mut b = Builder::default();
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES;
     for event in Parser::new_ext(markdown, options) {
         b.event(event);
     }
@@ -362,6 +458,14 @@ struct Builder {
     /// Niveau annoncé par un commentaire d'onglet : le titre qui suit est
     /// celui d'un onglet.
     tab: Option<u8>,
+    /// Suggestion en cours (`{++…++}` ou `{--…--}`).
+    change: Option<Mark>,
+    /// Définition de note en cours de lecture : son nom et son texte.
+    note: Option<(String, String)>,
+    /// Texte des notes, par nom (`[^nom]: texte`).
+    notes: HashMap<String, String>,
+    /// Dans la liste d'une table des matières (recalculée, donc ignorée).
+    in_toc: bool,
 }
 
 struct ContainerSlot(Container);
@@ -537,8 +641,42 @@ impl Builder {
             alt.push_str(text);
             return;
         }
+        if let Some((_, note)) = &mut self.note {
+            note.push_str(text);
+            return;
+        }
+        if extra.is_some() {
+            return self.push_marked(text, extra);
+        }
+        // Repère les marques de suggestion `{++`, `++}`, `{--` et `--}`.
+        let mut rest = text;
+        loop {
+            let found = ["{++", "++}", "{--", "--}"]
+                .iter()
+                .filter_map(|m| rest.find(m).map(|i| (i, *m)))
+                .min_by_key(|(i, _)| *i);
+            let Some((i, marker)) = found else {
+                self.push_marked(rest, None);
+                return;
+            };
+            self.push_marked(&rest[..i], None);
+            let attrs = ChangeAttrs::default();
+            self.change = match marker {
+                "{++" => Some(Mark::Insertion { attrs }),
+                "{--" => Some(Mark::Deletion { attrs }),
+                _ => None,
+            };
+            rest = &rest[i + marker.len()..];
+        }
+    }
+
+    fn push_marked(&mut self, text: &str, extra: Option<Mark>) {
+        if text.is_empty() {
+            return;
+        }
         let mut marks = self.marks.clone();
         marks.extend(extra);
+        marks.extend(self.change.clone());
         self.push_inline(Inline::Text {
             text: text.to_string(),
             marks,
@@ -546,6 +684,51 @@ impl Builder {
     }
 
     fn event(&mut self, event: Event) {
+        if self.in_toc {
+            if matches!(&event, Event::Html(h) if h.trim() == TOC_END) {
+                self.in_toc = false;
+            }
+            return;
+        }
+        if self.note.is_some() {
+            match event {
+                Event::End(TagEnd::FootnoteDefinition) => {
+                    let (name, text) = self.note.take().unwrap();
+                    self.notes.insert(name, text.trim().to_string());
+                }
+                Event::End(TagEnd::Paragraph) => {
+                    if let Some((_, text)) = &mut self.note {
+                        text.push('\n');
+                    }
+                }
+                Event::Text(t) | Event::Code(t) => self.push_text(&t, None),
+                Event::SoftBreak => self.push_text(" ", None),
+                Event::HardBreak => self.push_text("\n", None),
+                _ => {}
+            }
+            return;
+        }
+        match event {
+            Event::Start(Tag::FootnoteDefinition(name)) => {
+                self.flush_text();
+                self.note = Some((name.to_string(), String::new()));
+            }
+            Event::FootnoteReference(name) => self.push_inline(Inline::Footnote {
+                attrs: FootnoteAttrs {
+                    id: name.to_string(),
+                    content: String::new(),
+                },
+            }),
+            Event::Html(html) if html.trim() == TOC_START => {
+                self.flush_text();
+                self.top().push(Block::TableOfContents);
+                self.in_toc = true;
+            }
+            other => self.event_inner(other),
+        }
+    }
+
+    fn event_inner(&mut self, event: Event) {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => self.start_text(TextKind::Paragraph),
@@ -655,8 +838,38 @@ impl Builder {
         while self.stack.len() > 1 {
             self.close();
         }
-        let content = self.stack.pop().map(|(_, c)| c).unwrap_or_default();
+        let mut content = self.stack.pop().map(|(_, c)| c).unwrap_or_default();
+        // Le texte des notes est à la fin du fichier : on le remet dans les appels.
+        let mut n = 0;
+        for_each_inline_mut(&mut content, &mut |inline| {
+            if let Inline::Footnote { attrs } = inline {
+                n += 1;
+                attrs.content = self.notes.get(&attrs.id).cloned().unwrap_or_default();
+                attrs.id = format!("n{n}");
+            }
+        });
         Document::new(content)
+    }
+}
+
+fn for_each_inline_mut(blocks: &mut [Block], f: &mut dyn FnMut(&mut Inline)) {
+    for block in blocks {
+        match block {
+            Block::Paragraph { content, .. }
+            | Block::Heading { content, .. }
+            | Block::CodeBlock { content, .. } => content.iter_mut().for_each(&mut *f),
+            Block::Blockquote { content }
+            | Block::BulletList { content }
+            | Block::OrderedList { content, .. }
+            | Block::ListItem { content }
+            | Block::TaskList { content }
+            | Block::TaskItem { content, .. }
+            | Block::Table { content }
+            | Block::TableRow { content }
+            | Block::TableCell { content, .. }
+            | Block::TableHeader { content, .. } => for_each_inline_mut(content, f),
+            _ => {}
+        }
     }
 }
 
@@ -821,5 +1034,61 @@ let x = 1;
             "{md}"
         );
         assert_eq!(split_tabs(import(&md)), tabs);
+    }
+
+    #[test]
+    fn notes_sommaire_et_suggestions() {
+        let doc = Document::new(vec![
+            Block::TableOfContents,
+            Block::heading(2, "Première partie"),
+            Block::Paragraph {
+                attrs: BlockStyle::default(),
+                content: vec![
+                    Inline::text("Texte"),
+                    Inline::Footnote {
+                        attrs: FootnoteAttrs {
+                            id: "a".into(),
+                            content: "La note".into(),
+                        },
+                    },
+                    Inline::text(" "),
+                    Inline::Text {
+                        text: "ajouté".into(),
+                        marks: vec![Mark::Insertion {
+                            attrs: ChangeAttrs::default(),
+                        }],
+                    },
+                    Inline::Text {
+                        text: " retiré".into(),
+                        marks: vec![Mark::Deletion {
+                            attrs: ChangeAttrs::default(),
+                        }],
+                    },
+                ],
+            },
+            Block::heading(3, "Sous-partie"),
+        ]);
+        let md = export(&doc);
+        assert!(md.contains("- [Première partie](#première-partie)"), "{md}");
+        assert!(md.contains("  - [Sous-partie](#sous-partie)"), "{md}");
+        assert!(md.contains("Texte[^1] {++ajouté++}{-- retiré--}"), "{md}");
+        assert!(md.contains("[^1]: La note"), "{md}");
+        let back = import(&md);
+        assert_eq!(back.content[0], Block::TableOfContents);
+        assert_eq!(back.content.len(), 4, "{:?}", back.content);
+        let Block::Paragraph { content, .. } = &back.content[2] else {
+            panic!("{:?}", back.content)
+        };
+        assert!(matches!(&content[1], Inline::Footnote { attrs } if attrs.content == "La note"));
+        assert!(
+            matches!(&content[3], Inline::Text { text, marks }
+            if text == "ajouté" && matches!(marks[..], [Mark::Insertion { .. }])),
+            "{content:?}"
+        );
+        assert!(
+            matches!(&content[4], Inline::Text { text, marks }
+            if text == " retiré" && matches!(marks[..], [Mark::Deletion { .. }])),
+            "{content:?}"
+        );
     }
 }

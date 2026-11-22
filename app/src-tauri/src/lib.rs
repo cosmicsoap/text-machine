@@ -8,6 +8,7 @@ mod fonts;
 mod formats;
 mod pdf;
 mod session;
+mod versions;
 
 use session::Session;
 use tauri::AppHandle;
@@ -153,7 +154,12 @@ pub fn run() {
             load_draft,
             print_document,
             export_document,
-            export_pdf
+            export_pdf,
+            versions::list_versions,
+            versions::read_version,
+            versions::save_version,
+            versions::delete_version,
+            versions::copy_versions
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de Text Machine");

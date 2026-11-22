@@ -49,6 +49,29 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > par un titre de style « TM Onglet ») et Markdown (un commentaire invisible
 > avant le titre de l'onglet) : ils sont retrouvés à la réouverture. Les
 > styles sont écrits dans les styles Word ; le Markdown ne les garde pas.
+>
+> **Relecture et correction :**
+> - **Notes de bas de page** (Insertion > Note de bas de page, ⌥⌘F) : le
+>   numéro dans le texte, la note en bas de sa page, modifiable sur place
+>   (à la fin du document sans pagination). Vraies notes Word ; `[^1]` en
+>   Markdown.
+> - **Table des matières** (Insertion) : les Titres 1 à 3 de l'onglet,
+>   avec leurs numéros de page, mise à jour toute seule ; un clic y amène.
+>   Dans Word, c'est un vrai sommaire (clic droit > Mettre à jour).
+> - **Mode suggestion** (menu en haut à droite de la barre d'outils, ou
+>   ⌥⇧⌘X) : le texte ajouté est souligné en vert, le texte retiré reste
+>   barré en rouge. Chaque suggestion s'accepte ou se refuse dans une bulle,
+>   ou toutes d'un coup (Outils > Suggestions). Dans Word, ce sont des
+>   « modifications suivies » ; en Markdown, `{++ajout++}` et `{--retrait--}`.
+>   Seul le texte est suivi (pas la mise en forme).
+> - **Versions et comparaison côte à côte** (Fichier > Versions, ou
+>   Outils > Comparer avec l'original) : on fige une version du document,
+>   puis on corrige ; la version figée s'affiche à gauche, le texte en cours à
+>   droite, et les différences sont surlignées pendant la frappe (rouge :
+>   retiré, vert : ajouté). On peut aussi comparer avec un autre fichier, et
+>   restaurer une version. Les versions sont gardées par Text Machine (pas
+>   dans le fichier Word), et suivent le document s'il est renommé avec
+>   « Enregistrer sous ».
 
 ## Comment c'est construit
 

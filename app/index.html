@@ -86,6 +86,11 @@
           <button data-action="tableMenu" class="text" title="Autres actions sur le tableau">Tableau ▾</button>
         </span>
         <input type="file" id="image-file" accept="image/*" hidden />
+        <span class="spacer"></span>
+        <select id="edit-mode" class="edit-mode" title="Modification directe ou suggestions (⌥⇧⌘X)">
+          <option value="edit">✎ Modification</option>
+          <option value="suggest">💬 Suggestion</option>
+        </select>
       </div>
     </header>
 
@@ -115,7 +120,30 @@
       </aside>
       <button class="panel-show" id="panel-show" data-icon="panel" title="Afficher les onglets et le plan (⇧⌘O)" hidden></button>
 
+      <!-- Comparaison : une version enregistrée, à côté du texte en cours. -->
+      <section class="compare-pane" id="compare-pane" hidden>
+        <div class="compare-head">
+          <span class="compare-label">Version d'origine</span>
+          <select id="compare-select" title="Version comparée"></select>
+          <span class="spacer"></span>
+          <button type="button" id="compare-restore" class="text" title="Remplacer le texte en cours par cette version">Restaurer</button>
+          <button type="button" id="compare-close" data-icon="close" title="Fermer la comparaison"></button>
+        </div>
+        <div class="compare-desk">
+          <div class="paper pageless" id="compare-paper">
+            <div class="sheets" aria-hidden="true"><div class="sheet"></div></div>
+            <div id="compare-editor"></div>
+          </div>
+        </div>
+      </section>
+
       <main class="desk" id="desk">
+        <div class="desk-head">
+          <span class="compare-label">En cours de correction</span>
+          <span class="legend"><span class="legend-del">retiré</span> <span class="legend-ins">ajouté</span></span>
+          <span class="spacer"></span>
+          <span id="compare-count" class="compare-count"></span>
+        </div>
         <div class="paper" id="paper">
           <div class="sheets" id="sheets" aria-hidden="true"></div>
           <div id="editor"></div>
@@ -125,6 +153,26 @@
 
     <!-- Nombre de mots pendant la saisie (Outils > Nombre de mots). -->
     <button class="word-box" id="word-box" title="Nombre de mots (⇧⌘C)" hidden></button>
+
+    <!-- Suggestion sous le curseur : accepter ou refuser. -->
+    <div class="change-bubble" id="change-bubble" hidden>
+      <div class="change-info"><span class="change-what"></span><span class="change-date"></span></div>
+      <button type="button" data-change="accept" title="Accepter la suggestion">✓</button>
+      <button type="button" data-change="reject" title="Refuser la suggestion">✕</button>
+    </div>
+
+    <dialog id="text-dialog">
+      <form method="dialog">
+        <h2 id="text-title"></h2>
+        <label><span id="text-label"></span>
+          <input type="text" id="text-input" autocomplete="off" />
+        </label>
+        <menu>
+          <button value="cancel" type="submit" formnovalidate>Annuler</button>
+          <button value="ok" type="submit" class="primary" id="text-ok">OK</button>
+        </menu>
+      </form>
+    </dialog>
 
     <dialog id="link-dialog">
       <form method="dialog">

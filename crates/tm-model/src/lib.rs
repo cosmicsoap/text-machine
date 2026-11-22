@@ -103,6 +103,9 @@ pub enum Block {
     Image {
         attrs: ImageAttrs,
     },
+    /// Table des matières : la liste des titres de l'onglet, recalculée
+    /// par l'éditeur (et par Word à l'ouverture).
+    TableOfContents,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -220,6 +223,31 @@ pub enum Inline {
         marks: Vec<Mark>,
     },
     HardBreak,
+    /// Appel de note de bas de page : le numéro dans le texte ; le texte de
+    /// la note est dans `attrs.content`.
+    Footnote {
+        #[serde(default)]
+        attrs: FootnoteAttrs,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct FootnoteAttrs {
+    #[serde(default)]
+    pub id: String,
+    /// Texte de la note (sans mise en forme ; `\n` sépare les paragraphes).
+    #[serde(default)]
+    pub content: String,
+}
+
+/// Auteur et date d'une suggestion (suivi des modifications).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ChangeAttrs {
+    #[serde(default)]
+    pub author: String,
+    /// Date ISO 8601, par exemple `"2026-11-22T18:30:00Z"`.
+    #[serde(default)]
+    pub date: String,
 }
 
 /// Mise en forme des caractères.
@@ -249,6 +277,16 @@ pub enum Mark {
     /// Style de caractère créé par l'utilisateur.
     CharStyle {
         attrs: CharStyleAttrs,
+    },
+    /// Suggestion : texte ajouté, en attente d'acceptation.
+    Insertion {
+        #[serde(default)]
+        attrs: ChangeAttrs,
+    },
+    /// Suggestion : texte supprimé (encore visible, barré), en attente.
+    Deletion {
+        #[serde(default)]
+        attrs: ChangeAttrs,
     },
 }
 
@@ -327,6 +365,7 @@ impl Block {
                     match inline {
                         Inline::Text { text, .. } => out.push_str(text),
                         Inline::HardBreak => out.push('\n'),
+                        Inline::Footnote { .. } => {}
                     }
                 }
                 out.push('\n');
@@ -349,7 +388,10 @@ impl Block {
                 out.push_str(&attrs.title);
                 out.push('\n');
             }
-            Block::HorizontalRule | Block::PageBreak | Block::Image { .. } => out.push('\n'),
+            Block::HorizontalRule
+            | Block::PageBreak
+            | Block::Image { .. }
+            | Block::TableOfContents => out.push('\n'),
         }
     }
 }
@@ -502,6 +544,33 @@ pub fn flatten_tabs(tabs: &[Tab]) -> Document {
     let mut content = Vec::new();
     walk(tabs, 1, &mut content);
     Document::new(content)
+}
+
+/// Les titres (niveau, texte) de chaque partie du document : avant le
+/// premier titre d'onglet, puis après chacun. Sert aux tables des
+/// matières, qui listent les titres de leur onglet : « Titre 1 » à
+/// « Titre 3 » (niveaux 2 à 4), sans le « Titre » du document, comme Google Docs.
+pub fn headings_by_tab(blocks: &[Block]) -> Vec<Vec<(u8, String)>> {
+    let mut out = vec![Vec::new()];
+    for block in blocks {
+        match block {
+            Block::TabTitle { .. } => out.push(Vec::new()),
+            Block::Heading { attrs, content } if attrs.level >= 2 => {
+                let text = Document::new(vec![Block::Paragraph {
+                    attrs: BlockStyle::default(),
+                    content: content.clone(),
+                }])
+                .plain_text()
+                .trim()
+                .to_string();
+                if !text.is_empty() {
+                    out.last_mut().unwrap().push((attrs.level, text));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// L'inverse de [`flatten_tabs`] : découpe un document aux titres d'onglet.
@@ -929,5 +998,25 @@ mod tests {
         let doc = Document::from_json(r#"{"type":"doc"}"#).unwrap();
         assert_eq!(doc, Document::default());
         assert_eq!(doc.word_count(), 0);
+    }
+
+    #[test]
+    fn lit_notes_sommaire_et_suggestions_de_l_editeur() {
+        let json = r#"{"type":"doc","content":[
+            {"type":"tableOfContents"},
+            {"type":"paragraph","content":[
+                {"type":"text","text":"Texte"},
+                {"type":"footnote","attrs":{"id":"n1","content":"Une note"}},
+                {"type":"text","text":"ajout","marks":[{"type":"insertion","attrs":{"author":"Moi","date":"2026-11-22T10:00:00Z"}}]},
+                {"type":"text","text":"retrait","marks":[{"type":"deletion","attrs":{"author":"Moi","date":""}}]}
+            ]}
+        ]}"#;
+        let doc = Document::from_json(json).unwrap();
+        assert_eq!(doc.content[0], Block::TableOfContents);
+        let back: serde_json::Value = serde_json::from_str(&doc.to_json().unwrap()).unwrap();
+        let original: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(back, original);
+        // La note ne compte pas dans le texte.
+        assert_eq!(doc.plain_text(), "\nTexteajoutretrait\n");
     }
 }
