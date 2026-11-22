@@ -213,7 +213,8 @@ pub fn run() {
             versions::read_version,
             versions::save_version,
             versions::delete_version,
-            versions::copy_versions
+            versions::copy_versions,
+            versions::clear_versions
         ])
         .build(tauri::generate_context!())
         .expect("erreur au lancement de Text Machine")

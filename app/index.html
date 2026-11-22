@@ -221,7 +221,14 @@
           <label>Gauche <input type="number" name="left" min="0" max="10" step="any" inputmode="decimal" /></label>
           <label>Droite <input type="number" name="right" min="0" max="10" step="any" inputmode="decimal" /></label>
         </fieldset>
-        <label class="inline"><input type="checkbox" name="pageNumbers" /> Numéros de page</label>
+        <fieldset class="margins-text">
+          <legend>En-tête et pied de page</legend>
+          <label>En-tête <textarea name="header" rows="2" placeholder="Par exemple : titre du livre"></textarea></label>
+          <label>Pied de page <textarea name="footer" rows="2" placeholder="Par exemple : nom de l'auteur"></textarea></label>
+          <label class="inline"><input type="checkbox" name="pageNumbers" /> Numéros de page</label>
+          <label class="inline"><input type="checkbox" name="differentFirstPage" /> Rien sur la première page (page de titre)</label>
+          <p class="hint">Vous pouvez aussi les écrire directement dans la marge du haut ou du bas d'une page.</p>
+        </fieldset>
         <menu>
           <button value="cancel" type="submit" formnovalidate>Annuler</button>
           <button value="ok" type="submit" class="primary">OK</button>
