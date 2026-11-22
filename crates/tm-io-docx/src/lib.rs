@@ -7,16 +7,18 @@
 //! page, format de page, marges et numéros de page.
 
 mod import;
+mod notes;
 
 pub use import::{import, open, Imported};
 
 use base64::Engine;
 use docx_rs::{
-    AbstractNumbering, AlignmentType, BreakType, Docx, Footer, Hyperlink, HyperlinkType,
-    IndentLevel, Level, LevelJc, LevelText, LineSpacing, LineSpacingType, NumberFormat, Numbering,
-    NumberingId, PageMargin, PageNum, PageOrientationType, Paragraph, ParagraphBorder,
-    ParagraphBorderPosition, ParagraphBorders, Pic, Run, RunFonts, Shading, SpecialIndentType,
-    Start, Style, StyleType, Table, TableCell, TableRow, VertAlignType,
+    AbstractNumbering, AlignmentType, BreakType, Delete, Docx, Footer, Footnote, Hyperlink,
+    HyperlinkType, IndentLevel, Insert, Level, LevelJc, LevelText, LineSpacing, LineSpacingType,
+    NumberFormat, Numbering, NumberingId, PageMargin, PageNum, PageOrientationType, Paragraph,
+    ParagraphBorder, ParagraphBorderPosition, ParagraphBorders, Pic, Run, RunFonts, Shading,
+    SpecialIndentType, Start, Style, StyleType, Table, TableCell, TableOfContents,
+    TableOfContentsItem, TableRow, VertAlignType,
 };
 use tm_model::{
     Block, BlockStyle, Document, Inline, Mark, PageSetup, ParagraphStyle, StyleKind, StyleSheet,
@@ -52,16 +54,25 @@ const EMU_PER_PX: f64 = 9525.0;
 /// Exporte le document en `.docx` (le contenu du fichier).
 pub fn export(doc: &Document, page: &PageSetup, styles: &StyleSheet) -> Result<Vec<u8>, DocxError> {
     let mut w = Writer::new(page, styles);
+    w.headings = tm_model::headings_by_tab(&doc.content);
     for (i, block) in doc.content.iter().enumerate() {
         w.first = i == 0;
+        if matches!(block, Block::TabTitle { .. }) {
+            w.section += 1;
+        }
         w.block(block, &Ctx::default());
     }
+    let has_notes = w.has_notes;
     let mut out = std::io::Cursor::new(Vec::new());
     w.docx
         .build()
         .pack(&mut out)
         .map_err(|e| DocxError::Docx(e.to_string()))?;
-    Ok(out.into_inner())
+    let bytes = out.into_inner();
+    if has_notes {
+        return notes::add_note_numbers(&bytes);
+    }
+    Ok(bytes)
 }
 
 /// Exporte le document dans un fichier `.docx`.
@@ -101,6 +112,11 @@ struct Writer {
     /// Premier bloc du document (pas de saut de page avant un onglet).
     first: bool,
     sheet: StyleSheet,
+    /// Titres de chaque onglet, pour les tables des matières.
+    headings: Vec<Vec<(u8, String)>>,
+    /// Onglet en cours (index dans `headings`).
+    section: usize,
+    has_notes: bool,
 }
 
 /// Espacement Word (vingtièmes de point) d'un style.
@@ -323,6 +339,9 @@ impl Writer {
             normal: sheet.normal.clone(),
             first: true,
             sheet: sheet.clone(),
+            headings: Vec::new(),
+            section: 0,
+            has_notes: false,
         }
     }
 
@@ -431,6 +450,21 @@ impl Writer {
                 self.docx = std::mem::take(&mut self.docx).add_table(table);
             }
             Block::TableRow { .. } | Block::TableCell { .. } | Block::TableHeader { .. } => {}
+            Block::TableOfContents => {
+                // Un vrai sommaire Word (champ TOC) : Word le met à jour avec
+                // les numéros de page (clic droit > Mettre à jour le champ).
+                let mut toc = TableOfContents::new()
+                    .heading_styles_range(1, 3)
+                    .alias("Table des matières");
+                for (level, text) in self.headings.get(self.section).into_iter().flatten() {
+                    toc = toc.add_item(
+                        TableOfContentsItem::new()
+                            .text(text)
+                            .level(*level as usize - 1),
+                    );
+                }
+                self.docx = std::mem::take(&mut self.docx).add_table_of_contents(toc);
+            }
         }
     }
 
@@ -535,8 +569,35 @@ impl Writer {
         for inline in content {
             p = match inline {
                 Inline::HardBreak => p.add_run(Run::new().add_break(BreakType::TextWrapping)),
+                Inline::Footnote { attrs } => {
+                    self.has_notes = true;
+                    p.add_run(footnote_run(&attrs.content))
+                }
                 Inline::Text { text, marks } => {
                     let run = self.run(text, marks, ctx);
+                    let change = marks.iter().find_map(|m| match m {
+                        Mark::Insertion { attrs } => Some((true, attrs)),
+                        Mark::Deletion { attrs } => Some((false, attrs)),
+                        _ => None,
+                    });
+                    if let Some((inserted, change)) = change {
+                        let author = if change.author.is_empty() {
+                            "Text Machine"
+                        } else {
+                            &change.author
+                        };
+                        let date = if change.date.is_empty() {
+                            "2026-01-01T00:00:00Z"
+                        } else {
+                            &change.date
+                        };
+                        p = if inserted {
+                            p.add_insert(Insert::new(run).author(author).date(date))
+                        } else {
+                            p.add_delete(Delete::new().author(author).date(date).add_run(run))
+                        };
+                        continue;
+                    }
                     match marks.iter().find_map(|m| match m {
                         Mark::Link { attrs } => Some(attrs.href.clone()),
                         _ => None,
@@ -566,11 +627,16 @@ impl Writer {
     fn run(&self, text: &str, marks: &[Mark], ctx: &Ctx) -> Run {
         // Les retours à la ligne d'un bloc de code deviennent des sauts de ligne.
         let mut run = Run::new();
+        let deleted = marks.iter().any(|m| matches!(m, Mark::Deletion { .. }));
         for (i, line) in text.split('\n').enumerate() {
             if i > 0 {
                 run = run.add_break(BreakType::TextWrapping);
             }
-            run = run.add_text(line);
+            run = if deleted {
+                run.add_delete_text(line)
+            } else {
+                run.add_text(line)
+            };
         }
         if ctx.code {
             run = run.fonts(fonts("Courier New"));
@@ -609,7 +675,7 @@ impl Writer {
                 Mark::Strike => run.strike(),
                 Mark::Code => run.fonts(fonts("Courier New")),
                 Mark::Link { .. } => run.color("1155CC").underline("single"),
-                Mark::CharStyle { .. } => run,
+                Mark::CharStyle { .. } | Mark::Insertion { .. } | Mark::Deletion { .. } => run,
                 Mark::Superscript => {
                     run.run_property = run.run_property.vert_align(VertAlignType::SuperScript);
                     run
@@ -754,6 +820,25 @@ impl Writer {
     }
 }
 
+/// Appel de note : un numéro en exposant, et le texte de la note (une
+/// ligne = un paragraphe), que Word place en bas de page.
+fn footnote_run(content: &str) -> Run {
+    let mut note = Footnote::new();
+    for (i, line) in content.split('\n').enumerate() {
+        let mut p = Paragraph::new();
+        if i == 0 {
+            // Remplacé par le numéro de la note (voir `notes`).
+            let mut number = Run::new().add_text(notes::NUMBER_MARK);
+            number.run_property = number.run_property.vert_align(VertAlignType::SuperScript);
+            p = p.add_run(number).add_run(Run::new().add_text(" "));
+        }
+        note.add_content(p.add_run(Run::new().add_text(line).size(20)));
+    }
+    let mut run = Run::new().add_footnote_reference(note);
+    run.run_property = run.run_property.vert_align(VertAlignType::SuperScript);
+    run
+}
+
 fn fonts(name: &str) -> RunFonts {
     RunFonts::new()
         .ascii(name)
@@ -792,7 +877,7 @@ mod tests {
     use super::*;
     use std::io::Read;
 
-    fn document_xml(bytes: &[u8]) -> String {
+    pub(crate) fn document_xml(bytes: &[u8]) -> String {
         let mut zip = zip_reader(bytes);
         let mut xml = String::new();
         zip.by_name("word/document.xml")
@@ -802,7 +887,7 @@ mod tests {
         xml
     }
 
-    fn zip_reader(bytes: &[u8]) -> zip::ZipArchive<std::io::Cursor<&[u8]>> {
+    pub(crate) fn zip_reader(bytes: &[u8]) -> zip::ZipArchive<std::io::Cursor<&[u8]>> {
         zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap()
     }
 
@@ -1105,5 +1190,82 @@ mod import_tests {
         assert_eq!(word_font("Lexend", 700), ("Lexend".into(), true));
         assert_eq!(word_font("Lexend", 400), ("Lexend".into(), false));
         assert_eq!(word_font("Inter", 600), ("Inter SemiBold".into(), false));
+    }
+
+    fn notes_sommaire_suggestions() -> Document {
+        let change = |a: &str| tm_model::ChangeAttrs {
+            author: a.into(),
+            date: "2026-11-22T10:00:00Z".into(),
+        };
+        Document::new(vec![
+            Block::TableOfContents,
+            Block::heading(2, "Introduction"),
+            Block::Paragraph {
+                attrs: BlockStyle::default(),
+                content: vec![
+                    Inline::text("Un texte"),
+                    Inline::Footnote {
+                        attrs: tm_model::FootnoteAttrs {
+                            id: "n1".into(),
+                            content: "Une note & sa suite.\nDeuxième ligne".into(),
+                        },
+                    },
+                    Inline::text(" avec "),
+                    Inline::Text {
+                        text: "un ajout".into(),
+                        marks: vec![Mark::Insertion {
+                            attrs: change("Alice"),
+                        }],
+                    },
+                    Inline::text(" et "),
+                    Inline::Text {
+                        text: "un retrait".into(),
+                        marks: vec![Mark::Deletion {
+                            attrs: change("Bob"),
+                        }],
+                    },
+                    Inline::text("."),
+                ],
+            },
+            Block::heading(3, "Détails"),
+        ])
+    }
+
+    #[test]
+    fn notes_sommaire_et_suggestions_aller_retour() {
+        let doc = notes_sommaire_suggestions();
+        let bytes = export(&doc, &PageSetup::default(), &StyleSheet::default()).unwrap();
+        let xml = crate::tests::document_xml(&bytes);
+        assert!(xml.contains("w:footnoteReference"), "{xml}");
+        assert!(xml.contains("<w:ins"), "{xml}");
+        assert!(xml.contains("<w:delText"), "{xml}");
+        assert!(xml.contains("TOC"), "{xml}");
+        let mut notes = String::new();
+        use std::io::Read;
+        crate::tests::zip_reader(&bytes)
+            .by_name("word/footnotes.xml")
+            .unwrap()
+            .read_to_string(&mut notes)
+            .unwrap();
+        assert!(notes.contains("<w:footnoteRef/>"), "{notes}");
+        assert!(!notes.contains(notes::NUMBER_MARK));
+
+        let (back, _, _) = import(&bytes).unwrap();
+        assert_eq!(back.content[0], Block::TableOfContents);
+        assert!(matches!(&back.content[1], Block::Heading { attrs, .. } if attrs.level == 2));
+        let Block::Paragraph { content, .. } = &back.content[2] else {
+            panic!("{:?}", back.content);
+        };
+        assert!(
+            content
+                .iter()
+                .any(|i| matches!(i, Inline::Footnote { attrs }
+            if attrs.content == "Une note & sa suite.\nDeuxième ligne")),
+            "{content:?}"
+        );
+        assert!(content.iter().any(|i| matches!(i, Inline::Text { text, marks }
+            if text == "un ajout" && matches!(&marks[..], [Mark::Insertion { attrs }] if attrs.author == "Alice"))), "{content:?}");
+        assert!(content.iter().any(|i| matches!(i, Inline::Text { text, marks }
+            if text == "un retrait" && matches!(&marks[..], [Mark::Deletion { attrs }] if attrs.author == "Bob"))), "{content:?}");
     }
 }

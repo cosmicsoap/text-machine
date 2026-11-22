@@ -10,6 +10,7 @@
 import { Extension, Node, mergeAttributes } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
+import type { Node as PMNode } from "@tiptap/pm/model";
 
 export interface PageSetup {
   size: "A4" | "Letter";
@@ -83,10 +84,29 @@ interface Layout {
   /** Position (dans le document) du bloc qui commence chaque nouvelle page, et hauteur de l'espace à insérer avant. */
   breaks: { pos: number; height: number }[];
   pages: number;
+  /** Page (à partir de 0) de chaque note de bas de page, dans l'ordre. */
+  notePages: number[];
 }
 
-function computeLayout(view: EditorView, setup: PageSetup): Layout {
-  if (setup.pageless) return { breaks: [], pages: 1 };
+/** Hauteurs des notes d'un bloc (en pixels de la page). */
+function blockNotes(node: PMNode, noteHeight: PaginationOptions["noteHeight"], index: number) {
+  const heights: number[] = [];
+  node.descendants((child) => {
+    if (child.type.name === "footnote") heights.push(noteHeight(child.attrs.content ?? "", index + heights.length));
+    return true;
+  });
+  return heights;
+}
+
+function computeLayout(view: EditorView, setup: PageSetup, options: PaginationOptions): Layout {
+  const notePages: number[] = [];
+  if (setup.pageless) {
+    view.state.doc.descendants((n) => {
+      if (n.type.name === "footnote") notePages.push(0);
+      return true;
+    });
+    return { breaks: [], pages: 1, notePages };
+  }
   const { width, height } = pageSizePx(setup);
   const top = mmToPx(setup.margins.top);
   const bottom = mmToPx(setup.margins.bottom);
@@ -103,6 +123,7 @@ function computeLayout(view: EditorView, setup: PageSetup): Layout {
   let pageStart = 0; // début de la page courante, en coordonnées « sans espaces »
   let first = true;
   let forceBreak = false;
+  let notesHeight = 0; // hauteur des notes de la page courante (séparateur compris)
 
   view.state.doc.forEach((node, offset) => {
     const dom = view.nodeDOM(offset) as HTMLElement | null;
@@ -114,16 +135,23 @@ function computeLayout(view: EditorView, setup: PageSetup): Layout {
     const blockTop = rect.top / scale - rootTop - spacers;
     const blockBottom = rect.bottom / scale - rootTop - spacers;
 
-    if (!first && (forceBreak || blockBottom - pageStart > usable)) {
+    // Les notes appelées dans ce bloc vont en bas de la même page.
+    const notes = blockNotes(node, options.noteHeight, notePages.length);
+    const own = notes.reduce((a, b) => a + b, 0);
+    const withNotes = (current: number) => (current + own > 0 ? current + own + NOTE_SEPARATOR_PX : 0);
+    if (!first && (forceBreak || blockBottom - pageStart > usable - withNotes(notesHeight))) {
       const used = blockTop - pageStart;
       breaks.push({ pos: offset, height: Math.max(0, usable - used) + bottom + top });
       pageStart = blockTop;
+      notesHeight = 0;
     }
+    notesHeight += own;
+    for (let i = 0; i < notes.length; i++) notePages.push(breaks.length);
     first = false;
     forceBreak = node.type.name === "pageBreak";
   });
 
-  return { breaks, pages: breaks.length + 1 };
+  return { breaks, pages: breaks.length + 1, notePages };
 }
 
 /**
@@ -139,10 +167,15 @@ function spacer(height: number) {
   return el;
 }
 
+/** Place du trait au-dessus des notes de bas de page. */
+export const NOTE_SEPARATOR_PX = 18;
+
 export interface PaginationOptions {
   getSetup: () => PageSetup;
-  /** Appelé quand le nombre de pages change, pour dessiner les feuilles. */
-  onLayout: (pages: number) => void;
+  /** Appelé après chaque calcul, pour dessiner les feuilles et les notes. */
+  onLayout: (pages: number, notePages: number[]) => void;
+  /** Hauteur d'une note de bas de page (texte, numéro `index` à partir de 0). */
+  noteHeight: (content: string, index: number) => number;
 }
 
 export const Pagination = Extension.create<PaginationOptions>({
@@ -152,6 +185,7 @@ export const Pagination = Extension.create<PaginationOptions>({
     return {
       getSetup: () => DEFAULT_PAGE_SETUP,
       onLayout: () => {},
+      noteHeight: () => 0,
     };
   },
 
@@ -163,9 +197,9 @@ export const Pagination = Extension.create<PaginationOptions>({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (view.isDestroyed) return;
-        const layout = computeLayout(view, options.getSetup());
+        const layout = computeLayout(view, options.getSetup(), options);
         const signature = layout.breaks.map((b) => `${b.pos}:${Math.round(b.height)}`).join(",");
-        options.onLayout(layout.pages);
+        options.onLayout(layout.pages, layout.notePages);
         if (signature === key.getState(view.state)!.breaks) return;
         const decorations = DecorationSet.create(
           view.state.doc,

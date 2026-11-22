@@ -8,6 +8,7 @@ mod fonts;
 mod formats;
 mod pdf;
 mod session;
+mod versions;
 
 use session::Session;
 use std::sync::Mutex;
@@ -207,7 +208,12 @@ pub fn run() {
             print_document,
             export_document,
             export_pdf,
-            take_opened_files
+            take_opened_files,
+            versions::list_versions,
+            versions::read_version,
+            versions::save_version,
+            versions::delete_version,
+            versions::copy_versions
         ])
         .build(tauri::generate_context!())
         .expect("erreur au lancement de Text Machine")

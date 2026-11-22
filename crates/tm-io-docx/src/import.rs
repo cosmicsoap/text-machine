@@ -5,15 +5,16 @@
 //! Ce qui n'a pas d'équivalent dans Text Machine (zones de texte, notes,
 //! commentaires…) est ignoré, mais leur texte est gardé quand c'est possible.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use base64::Engine;
 use serde_json::Value;
 use tm_model::{
-    Block, BlockStyle, CellAttrs, CharStyleAttrs, CustomStyle, Document, HeadingAttrs,
-    HighlightAttrs, ImageAttrs, Inline, LinkAttrs, Margins, Mark, OrderedListAttrs, PageSetup,
-    PageSize, ParagraphStyle, StyleKind, StyleSheet, TabTitleAttrs, TaskItemAttrs, TextStyleAttrs,
-    MAX_TAB_LEVEL,
+    Block, BlockStyle, CellAttrs, ChangeAttrs, CharStyleAttrs, CustomStyle, Document,
+    FootnoteAttrs, HeadingAttrs, HighlightAttrs, ImageAttrs, Inline, LinkAttrs, Margins, Mark,
+    OrderedListAttrs, PageSetup, PageSize, ParagraphStyle, StyleKind, StyleSheet, TabTitleAttrs,
+    TaskItemAttrs, TextStyleAttrs, MAX_TAB_LEVEL,
 };
 
 use crate::DocxError;
@@ -27,10 +28,13 @@ pub type Imported = (Document, PageSetup, StyleSheet);
 /// Lit un fichier `.docx` : le document (avec ses titres d'onglet), sa mise
 /// en page et ses styles de paragraphe.
 pub fn import(bytes: &[u8]) -> Result<Imported, DocxError> {
-    let docx = docx_rs::read_docx(bytes).map_err(|e| DocxError::Docx(e.to_string()))?;
+    let (bytes, notes) =
+        crate::notes::extract_notes(bytes).unwrap_or_else(|_| (bytes.to_vec(), HashMap::new()));
+    let docx = docx_rs::read_docx(&bytes).map_err(|e| DocxError::Docx(e.to_string()))?;
     let json: Value =
         serde_json::from_str(&docx.json()).map_err(|e| DocxError::Docx(e.to_string()))?;
-    let reader = Reader::new(&json);
+    let mut reader = Reader::new(&json);
+    reader.notes = notes;
     let mut out = Vec::new();
     reader.blocks(&json["document"]["children"], &mut out);
     let content = group_lists(out);
@@ -191,6 +195,9 @@ struct Reader {
     links: HashMap<String, String>,
     default_size: Option<u64>,
     default_font: Option<String>,
+    /// Texte des notes de bas de page, par identifiant Word.
+    notes: HashMap<String, String>,
+    note_count: Cell<usize>,
 }
 
 /// Un bloc lu, avant de regrouper les éléments de liste.
@@ -278,13 +285,45 @@ impl Reader {
             links,
             default_size: defaults["sz"].as_u64(),
             default_font: defaults["fonts"]["ascii"].as_str().map(str::to_string),
+            notes: HashMap::new(),
+            note_count: Cell::new(0),
         }
+    }
+
+    /// Du texte d'un morceau, avec les appels de note (repères posés par
+    /// [`crate::notes::extract_notes`]).
+    fn text(&self, inlines: &mut Vec<Inline>, text: &str, marks: &[Mark]) {
+        use crate::notes::{REF_END, REF_START};
+        let mut rest = text;
+        while let Some(i) = rest.find(REF_START) {
+            push_text(inlines, &rest[..i], marks);
+            let after = &rest[i + REF_START.len_utf8()..];
+            let Some(j) = after.find(REF_END) else {
+                rest = after;
+                continue;
+            };
+            let n = self.note_count.get() + 1;
+            self.note_count.set(n);
+            inlines.push(Inline::Footnote {
+                attrs: FootnoteAttrs {
+                    id: format!("n{n}"),
+                    content: self.notes.get(&after[..j]).cloned().unwrap_or_default(),
+                },
+            });
+            rest = &after[j + REF_END.len_utf8()..];
+        }
+        push_text(inlines, rest, marks);
     }
 
     fn blocks(&self, children: &Value, out: &mut Vec<Item>) {
         for child in children.as_array().into_iter().flatten() {
             let data = &child["data"];
             match child["type"].as_str() {
+                Some("paragraph") if is_toc_style(data["property"]["style"].as_str()) => {
+                    push_toc(out)
+                }
+                Some("tableOfContents") => push_toc(out),
+                Some("structuredDataTag") if is_toc(data) => push_toc(out),
                 Some("paragraph") => self.paragraph(data, out),
                 Some("table") => out.push(Item::Block(self.table(data))),
                 // Blocs « conteneurs » (contrôles de contenu…) : on lit l'intérieur.
@@ -468,8 +507,22 @@ impl Reader {
                     self.paragraph_child(c, &marks, inlines, pieces);
                 }
             }
-            // Insertions (suivi des modifications), contrôles de contenu… : on lit l'intérieur.
-            Some("delete") => {}
+            // Suivi des modifications : des suggestions dans Text Machine.
+            Some(kind @ ("insert" | "delete")) => {
+                let attrs = ChangeAttrs {
+                    author: data["author"].as_str().unwrap_or_default().to_string(),
+                    date: data["date"].as_str().unwrap_or_default().to_string(),
+                };
+                let mut marks = marks.to_vec();
+                marks.push(if kind == "insert" {
+                    Mark::Insertion { attrs }
+                } else {
+                    Mark::Deletion { attrs }
+                });
+                for c in data["children"].as_array().into_iter().flatten() {
+                    self.paragraph_child(c, &marks, inlines, pieces);
+                }
+            }
             _ => {
                 for c in data["children"].as_array().into_iter().flatten() {
                     self.paragraph_child(c, marks, inlines, pieces);
@@ -491,7 +544,9 @@ impl Reader {
         for c in data["children"].as_array().into_iter().flatten() {
             let d = &c["data"];
             match c["type"].as_str() {
-                Some("text") => push_text(inlines, d["text"].as_str().unwrap_or_default(), &marks),
+                Some("text" | "deleteText") => {
+                    self.text(inlines, d["text"].as_str().unwrap_or_default(), &marks)
+                }
                 Some("tab") => push_text(inlines, "\t", &marks),
                 Some("break") => {
                     if d["breakType"].as_str() == Some("page") {
@@ -691,6 +746,36 @@ impl Reader {
 enum Piece {
     Text(Vec<Inline>),
     Block(Block),
+}
+
+/// Style d'une ligne de sommaire : « TOC1 » (Word), « ToC1 », « Contents 1 »…
+fn is_toc_style(style: Option<&str>) -> bool {
+    let Some(style) = style else { return false };
+    let lower = style.to_lowercase().replace(' ', "");
+    ["toc", "contents", "tabledesmatières"].iter().any(|p| {
+        lower
+            .strip_prefix(p)
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+/// Un contrôle de contenu qui contient un sommaire (champ TOC ou lignes de sommaire).
+fn is_toc(data: &Value) -> bool {
+    let json = data.to_string();
+    json.contains("\"TOC ")
+        || json.contains("\"tableOfContents\"")
+        || data["children"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|c| is_toc_style(c["data"]["property"]["style"].as_str()))
+}
+
+/// Un seul bloc pour toutes les lignes d'un sommaire.
+fn push_toc(out: &mut Vec<Item>) {
+    if !matches!(out.last(), Some(Item::Block(Block::TableOfContents))) {
+        out.push(Item::Block(Block::TableOfContents));
+    }
 }
 
 fn push_text(inlines: &mut Vec<Inline>, text: &str, marks: &[Mark]) {
