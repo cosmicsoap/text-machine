@@ -157,9 +157,6 @@ fn table_to_markdown(rows: &[Block]) -> String {
                         }
                         _ => String::new(),
                     })
-                    // Une cellule vide garde une espace insécable : certains
-                    // éditeurs (Typora) ne voient pas un tableau à l'en-tête vide.
-                    .map(|text| if text.is_empty() { "&nbsp;".to_string() } else { text })
                     .collect(),
             ),
             _ => None,
@@ -385,7 +382,7 @@ impl Builder {
             Container::Table => Block::Table { content },
             Container::Row { .. } => Block::TableRow { content },
             Container::Cell { header } => {
-                // « &nbsp; » seul : une cellule vide (voir table_to_markdown).
+                // « &nbsp; » seul (écrit par une version précédente) : cellule vide.
                 let content: Vec<Block> = content
                     .into_iter()
                     .filter(|b| !matches!(b, Block::Paragraph { content, .. }
@@ -665,12 +662,21 @@ let x = 1;
                 {"type":"tableCell","attrs":{"colspan":1,"rowspan":1,"colwidth":null},"content":[{"type":"paragraph","content":[{"type":"text","text":"12"}]}]}]}]}]}"#;
         let doc: Document = serde_json::from_str(json).unwrap();
         let md = export(&doc);
-        assert_eq!(md, "| Produit | &nbsp; |\n| ------- | ------ |\n| a<br>b  | 12     |\n");
+        assert_eq!(md, "| Produit |     |\n| ------- | --- |\n| a<br>b  | 12  |\n");
         let back = import(&md);
         let Block::Table { content: rows } = &back.content[0] else { panic!("{back:?}") };
         assert_eq!(rows.len(), 2);
         // Le retour à la ligne revient comme tel, pas comme « <br> ».
         assert_eq!(export(&back), md);
+    }
+
+    #[test]
+    fn tableau_vide_reste_vide() {
+        // Cellules vraiment vides, et « &nbsp; » d'une version précédente.
+        for md in ["|  |  |\n| --- | --- |\n|  |  |\n", "| &nbsp; | &nbsp; |\n| --- | --- |\n| &nbsp; | &nbsp; |\n"] {
+            let doc = import(md);
+            assert_eq!(export(&doc), "|     |     |\n| --- | --- |\n|     |     |\n", "{md}");
+        }
     }
 
     #[test]
