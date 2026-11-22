@@ -1,10 +1,14 @@
-//! Export Word (`.docx`) pour Text Machine.
+//! Lecture et écriture Word (`.docx`) pour Text Machine.
 //!
 //! Gardé : styles de titre (reconnus par Word dans son plan), police,
 //! taille, couleurs, surlignage, gras/italique/souligné/barré, exposant et
 //! indice, liens, alignement, interligne, retraits, listes (à puces,
 //! numérotées, cases à cocher), citations, code, tableaux, images, sauts de
 //! page, format de page, marges et numéros de page.
+
+mod import;
+
+pub use import::{import, open};
 
 use base64::Engine;
 use docx_rs::{
@@ -131,7 +135,8 @@ impl Writer {
         }
         Self {
             docx,
-            next_numbering: 1,
+            // Le numéro 1 est déjà pris par la numérotation par défaut de docx-rs.
+            next_numbering: 2,
             content_width_px: (w_mm - m.left - m.right) * 96.0 / 25.4,
         }
     }
@@ -562,5 +567,99 @@ mod tests {
         assert_eq!(hex(Some("rgb(1,2,3)")), None);
         assert_eq!(points("14pt"), Some(14.0));
         assert_eq!(points("16px"), Some(12.0));
+    }
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    fn sample() -> Document {
+        let json = include_str!("../../tm-model/tests/fixtures/tiptap-formatting.json");
+        let mut doc = Document::from_json(json).unwrap();
+        let tables = include_str!("../../tm-model/tests/fixtures/tiptap-table-image.json");
+        let mut more = Document::from_json(tables).unwrap().content;
+        // L'image de la capture est tronquée : on met une vraie image.
+        more.retain(|b| !matches!(b, Block::Image { .. }));
+        doc.content.extend(more);
+        doc.content.push(Block::PageBreak);
+        doc.content.push(Block::heading(2, "Chapitre"));
+        doc.content.push(Block::Image {
+            attrs: tm_model::ImageAttrs {
+                src: format!("data:image/png;base64,{PNG}"),
+                alt: None,
+                title: None,
+                width: Some(50.0),
+                height: Some(50.0),
+            },
+        });
+        doc.content.push(Block::BulletList {
+            content: vec![
+                Block::ListItem {
+                    content: vec![
+                        Block::paragraph("puce"),
+                        Block::OrderedList {
+                            attrs: Default::default(),
+                            content: vec![Block::ListItem { content: vec![Block::paragraph("sous")] }],
+                        },
+                    ],
+                },
+                Block::ListItem { content: vec![Block::paragraph("puce 2")] },
+            ],
+        });
+        doc.content.push(Block::HorizontalRule);
+        doc
+    }
+
+    #[test]
+    fn aller_retour_word() {
+        let doc = sample();
+        let mut page = PageSetup::default();
+        page.size = tm_model::PageSize::Letter;
+        page.landscape = true;
+        page.margins.left = 30.0;
+        page.page_numbers = false;
+        let bytes = export(&doc, &page).unwrap();
+        let (back, back_page) = import(&bytes).unwrap();
+
+        assert_eq!(back_page, page);
+        assert_eq!(back.plain_text(), doc.plain_text());
+        let json = back.to_json().unwrap();
+        for needle in [
+            r#""fontFamily":"Arial""#,
+            r#""fontSize":"18pt""#,
+            r##""color":"#2266aa""##,
+            r##""type":"highlight","attrs":{"color":"#ffee00"}"##,
+            r#""textAlign":"center""#,
+            r#""lineHeight":"2""#,
+            r#""indent":1"#,
+            r#""type":"taskList""#,
+            r#""href":"https://exemple.fr""#,
+            r#""type":"superscript""#,
+            r#""type":"tableHeader""#,
+            r#""type":"pageBreak""#,
+            r#""type":"heading","attrs":{"level":2}"#,
+            r#""type":"image""#,
+            r#""type":"bulletList""#,
+            r#""type":"orderedList""#,
+            r#""type":"horizontalRule""#,
+        ] {
+            assert!(json.contains(needle), "manque {needle} dans {json}");
+        }
+        // L'en-tête de tableau n'a pas de gras ajouté, et la sous-liste est dans la puce.
+        match back.content.iter().find(|b| matches!(b, Block::BulletList { .. })) {
+            Some(Block::BulletList { content }) => {
+                assert_eq!(content.len(), 2);
+                assert!(matches!(&content[0], Block::ListItem { content } if content.len() == 2));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn refuse_un_fichier_qui_n_est_pas_word() {
+        assert!(import(b"pas un docx").is_err());
     }
 }

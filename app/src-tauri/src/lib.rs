@@ -4,6 +4,8 @@
 //! `invoke(...)`. Le document circule au format JSON de TipTap, converti en
 //! `tm_model::Document` à l'entrée.
 
+mod formats;
+mod pdf;
 mod session;
 
 use session::Session;
@@ -18,7 +20,7 @@ fn word_count(doc: Document) -> usize {
 
 #[tauri::command]
 fn open_document(app: AppHandle, path: String) -> Result<NativeFile, String> {
-    let file = tm_io_native::open(&path).map_err(|e| e.to_string())?;
+    let file = formats::read(&path)?;
     remember(&app, &path);
     Ok(file)
 }
@@ -29,7 +31,7 @@ fn save_document(app: AppHandle, path: String, doc: Document, page: PageSetup) -
         document: doc,
         page,
     };
-    tm_io_native::save(&path, &file).map_err(|e| e.to_string())?;
+    formats::write(&path, &file)?;
     remember(&app, &path);
     Ok(())
 }
@@ -70,42 +72,26 @@ fn load_draft(app: AppHandle) -> Option<NativeFile> {
     session::load_draft(&app)
 }
 
-/// Ouvre la fenêtre d'impression du système (sur Mac, elle permet aussi
-/// d'enregistrer en PDF).
+/// Ouvre la fenêtre d'impression du système.
 #[tauri::command]
 fn print_document(webview: tauri::Webview) -> Result<(), String> {
     webview.print().map_err(|e| e.to_string())
 }
 
-/// Exporte en Word (`.docx`), Markdown (`.md`) ou texte brut (autre extension).
+/// Exporte une copie (Word, Markdown, texte…) sans changer le fichier ouvert.
 #[tauri::command]
 fn export_document(path: String, doc: Document, page: PageSetup) -> Result<(), String> {
-    if path.to_lowercase().ends_with(".docx") {
-        return tm_io_docx::save(&path, &doc, &page).map_err(|e| e.to_string());
-    }
-    let contents = if is_markdown(&path) {
-        tm_io_markdown::export(&doc)
-    } else {
-        tm_io_markdown::export_plain_text(&doc)
-    };
-    std::fs::write(&path, contents).map_err(|e| e.to_string())
+    formats::write(&path, &NativeFile { document: doc, page })
 }
 
-/// Importe un fichier Markdown ou texte brut.
+/// Enregistre la page affichée en PDF, sans passer par l'impression.
 #[tauri::command]
-fn import_document(path: String) -> Result<Document, String> {
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&bytes);
-    Ok(if is_markdown(&path) {
-        tm_io_markdown::import(&text)
-    } else {
-        tm_io_markdown::import_plain_text(&text)
-    })
-}
-
-fn is_markdown(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    lower.ends_with(".md") || lower.ends_with(".markdown")
+fn export_pdf(
+    window: tauri::WebviewWindow,
+    path: String,
+    page: PageSetup,
+) -> Result<(), String> {
+    pdf::export(&window, &path, &page)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -122,7 +108,7 @@ pub fn run() {
             load_draft,
             print_document,
             export_document,
-            import_document
+            export_pdf
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de Text Machine");

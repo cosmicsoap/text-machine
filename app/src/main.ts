@@ -28,7 +28,15 @@ import { ParagraphFormat } from "./extensions/paragraph-format";
 import { invoke } from "@tauri-apps/api/core";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 
-const FILTERS = [{ name: "Document Text Machine", extensions: ["tmd"] }];
+/** Formats que l'application ouvre et enregistre directement. */
+const OPEN_FILTERS = [
+  { name: "Documents", extensions: ["docx", "md", "markdown", "txt", "tmd"] },
+];
+const SAVE_FILTERS = [
+  { name: "Document Word", extensions: ["docx"] },
+  { name: "Markdown", extensions: ["md"] },
+  { name: "Texte brut", extensions: ["txt"] },
+];
 
 let currentPath: string | null = null;
 let pageSetup: PageSetup = structuredClone(DEFAULT_PAGE_SETUP);
@@ -332,8 +340,15 @@ async function writeFile(path: string) {
   await invoke("save_document", { path, doc: editor.getJSON(), page: pageSetup });
   dirty = false;
   setPath(path);
-  setSaveStatus("Enregistré");
+  setSaveStatus(savedLabel(path));
   refreshRecent();
+}
+
+/** Markdown et texte ne gardent pas toute la mise en forme : on le rappelle. */
+function savedLabel(path: string) {
+  if (/\.(md|markdown)$/i.test(path)) return "Enregistré en Markdown (sans couleurs ni polices)";
+  if (/\.txt$/i.test(path)) return "Enregistré en texte brut (sans mise en forme)";
+  return "Enregistré";
 }
 
 function loadFile(file: NativeFile, path: string | null) {
@@ -343,7 +358,7 @@ function loadFile(file: NativeFile, path: string | null) {
   loading = false;
   dirty = false;
   setPath(path);
-  setSaveStatus(path ? "Enregistré" : "");
+  setSaveStatus(path ? savedLabel(path) : "");
   updateWordCount();
   scheduleOutline();
 }
@@ -359,7 +374,7 @@ async function openPath(path: string) {
 }
 
 async function openFile() {
-  const path = await open({ multiple: false, filters: FILTERS });
+  const path = await open({ multiple: false, filters: OPEN_FILTERS });
   if (typeof path === "string") await openPath(path);
 }
 
@@ -370,8 +385,8 @@ async function saveFile() {
 
 async function saveFileAs() {
   const path = await save({
-    filters: FILTERS,
-    defaultPath: currentPath ?? `${suggestedName()}.tmd`,
+    filters: SAVE_FILTERS,
+    defaultPath: currentPath?.replace(/\.tmd$/i, ".docx") ?? `${suggestedName()}.docx`,
   });
   if (!path) return;
   try {
@@ -452,20 +467,22 @@ async function exportAs(kind: keyof typeof EXPORTS) {
   }
 }
 
-/** Importer un fichier Markdown ou texte : il devient un nouveau document sans titre. */
-async function importFile() {
-  const path = await open({
-    multiple: false,
-    filters: [{ name: "Markdown ou texte", extensions: ["md", "markdown", "txt"] }],
+/**
+ * Export PDF direct : choix du fichier, puis la page est écrite telle
+ * qu'à l'écran. Si ce n'est pas possible (hors Mac), on passe par l'impression.
+ */
+async function exportPdf() {
+  const path = await save({
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+    defaultPath: `${suggestedName()}.pdf`,
   });
-  if (typeof path !== "string" || !(await leaveUntitled())) return;
+  if (!path) return;
   try {
-    const doc = await invoke<JSONContent>("import_document", { path });
-    loadFile({ document: doc, page: structuredClone(DEFAULT_PAGE_SETUP) }, null);
-    await invoke("forget_last_file").catch(() => {});
-    markDirty();
+    await invoke("export_pdf", { path, page: pageSetup });
+    setSaveStatus(`PDF enregistré : ${fileName(path)}`);
   } catch (e) {
-    alert(String(e));
+    alert(`${e}\nLa fenêtre d'impression va s'ouvrir : choisissez « Enregistrer au format PDF ».`);
+    printDocument();
   }
 }
 
@@ -473,7 +490,8 @@ const exportMenu = document.querySelector<HTMLElement>("#export-menu")!;
 exportMenu.addEventListener("click", (event) => {
   const kind = (event.target as HTMLElement).closest("button")?.dataset.export;
   exportMenu.hidden = true;
-  if (kind === "print") printDocument();
+  if (kind === "pdf") exportPdf();
+  else if (kind === "print") printDocument();
   else if (kind === "docx" || kind === "md" || kind === "txt") exportAs(kind);
 });
 
@@ -556,7 +574,6 @@ const actions: Record<string, () => unknown> = {
   open: openFile,
   recent: toggleRecent,
   export: () => (exportMenu.hidden = !exportMenu.hidden),
-  import: importFile,
   save: saveFile,
   undo: () => chain().undo().run(),
   redo: () => chain().redo().run(),
@@ -608,6 +625,7 @@ function openPageDialog() {
   }
   for (const side of SIDES) field(side).value = String(+(pageSetup.margins[side] / 10).toFixed(2));
   field("pageNumbers").checked = pageSetup.pageNumbers;
+  pageDialog.returnValue = "";
   pageDialog.showModal();
 }
 
@@ -616,6 +634,7 @@ pageDialog.addEventListener("close", () => {
   if (pageDialog.returnValue !== "ok") return;
   const cm = (side: (typeof SIDES)[number]) => {
     const value = parseFloat(field(side).value.replace(",", "."));
+    // Marges entre 0 et 10 cm ; une case vide ou illisible garde l'ancienne valeur.
     return Number.isFinite(value) ? Math.min(100, Math.max(0, value * 10)) : pageSetup.margins[side];
   };
   setPageSetup({
@@ -676,6 +695,7 @@ highlightColor.addEventListener("change", () =>
 // Liens : une petite fenêtre pour saisir l'adresse.
 function openLinkDialog() {
   linkUrl.value = editor.getAttributes("link").href ?? "";
+  linkDialog.returnValue = "";
   linkDialog.showModal();
   linkUrl.select();
 }
@@ -686,7 +706,9 @@ linkDialog.addEventListener("close", () => setTimeout(applyLinkDialog));
 
 function applyLinkDialog() {
   const choice = linkDialog.returnValue;
-  const href = linkUrl.value.trim();
+  let href = linkUrl.value.trim();
+  // « exemple.fr » devient « https://exemple.fr » ; mailto:, tel:… restent tels quels.
+  if (href && !/^[a-z][a-z0-9+.-]*:/i.test(href)) href = `https://${href}`;
   if (choice === "remove") {
     chain().extendMarkRange("link").unsetLink().run();
   } else if (choice === "ok" && href) {
