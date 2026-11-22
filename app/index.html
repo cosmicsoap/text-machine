@@ -7,111 +7,136 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <header class="toolbar" id="toolbar">
-      <button data-action="new" title="Nouveau document (⌘N)">Nouveau</button>
-      <button data-action="open" title="Ouvrir un document Word, Markdown ou texte (⌘O)">Ouvrir</button>
-      <span class="menu-anchor">
-        <button data-action="recent" title="Fichiers récents">Récents ▾</button>
-        <div class="menu" id="recent-menu" hidden></div>
-      </span>
-      <button data-action="save" title="Enregistrer (⌘S) — Enregistrer sous : ⇧⌘S">Enregistrer</button>
-      <span class="menu-anchor">
-        <button data-action="export" title="Exporter dans un autre format">Exporter ▾</button>
-        <div class="menu" id="export-menu" hidden>
-          <button data-export="pdf">PDF (.pdf)…</button>
-          <button data-export="docx">Word (.docx)</button>
-          <button data-export="md">Markdown (.md)</button>
-          <button data-export="txt">Texte brut (.txt)</button>
-          <hr />
-          <button data-export="print">Imprimer… (⌘P)</button>
+    <!-- En-tête façon Google Docs : titre, menus, puis barre d'outils. -->
+    <header class="app-header">
+      <div class="title-row">
+        <span class="logo" data-icon="doc"></span>
+        <div class="title-block">
+          <div class="title-line">
+            <span id="file-name" class="file-name" title="Nom du fichier">Sans titre</span>
+            <span id="save-status" class="save-status"></span>
+          </div>
+          <nav class="menubar" id="menubar" aria-label="Menus"></nav>
         </div>
-      </span>
-      <span class="sep"></span>
-      <button data-action="undo" title="Annuler (⌘Z)">↶</button>
-      <button data-action="redo" title="Rétablir (⇧⌘Z)">↷</button>
-      <span class="sep"></span>
-      <select id="block-style" title="Style de paragraphe">
-        <option value="p">Texte normal</option>
-        <option value="1">Titre</option>
-        <option value="2">Titre 1</option>
-        <option value="3">Titre 2</option>
-        <option value="4">Titre 3</option>
-      </select>
-      <select id="font-family" title="Police">
-        <option value="">Police par défaut</option>
-        <option>Arial</option>
-        <option>Helvetica Neue</option>
-        <option>Georgia</option>
-        <option>Times New Roman</option>
-        <option>Palatino</option>
-        <option>Garamond</option>
-        <option>Verdana</option>
-        <option>Courier New</option>
-      </select>
-      <select id="font-size" title="Taille du texte">
-        <option value="">Taille</option>
-        <option>8</option><option>9</option><option>10</option><option>11</option>
-        <option>12</option><option>14</option><option>16</option><option>18</option>
-        <option>24</option><option>30</option><option>36</option><option>48</option>
-        <option>60</option><option>72</option>
-      </select>
-      <span class="sep"></span>
-      <button data-action="bold" title="Gras (⌘B)"><b>G</b></button>
-      <button data-action="italic" title="Italique (⌘I)"><i>I</i></button>
-      <button data-action="underline" title="Souligné (⌘U)"><u>S</u></button>
-      <button data-action="strike" title="Barré (⇧⌘X)"><s>B</s></button>
-      <button data-action="superscript" title="Exposant (⌘.)">x²</button>
-      <button data-action="subscript" title="Indice (⌘,)">x₂</button>
-      <label class="color" title="Couleur du texte">
-        <span class="swatch-letter">A</span>
-        <input type="color" id="text-color" value="#c0392b" />
-      </label>
-      <label class="color" title="Couleur de surlignage">
-        <span class="swatch-letter">🖍</span>
-        <input type="color" id="highlight-color" value="#fff3a3" />
-      </label>
-      <button data-action="link" title="Insérer un lien (⌘K)">🔗</button>
-      <button data-action="clearFormat" title="Effacer la mise en forme (⌘\)">⌫ Format</button>
-      <span class="sep"></span>
-      <button data-action="alignLeft" title="Aligner à gauche (⇧⌘L)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="1" y="5.5" width="9" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="1" y="12.5" width="9" height="1.6"/></svg></button>
-      <button data-action="alignCenter" title="Centrer (⇧⌘E)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="3.5" y="5.5" width="9" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="3.5" y="12.5" width="9" height="1.6"/></svg></button>
-      <button data-action="alignRight" title="Aligner à droite (⇧⌘R)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="6" y="5.5" width="9" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="6" y="12.5" width="9" height="1.6"/></svg></button>
-      <button data-action="alignJustify" title="Justifier (⇧⌘J)"><svg class="icon" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="1.6"/><rect x="1" y="5.5" width="14" height="1.6"/><rect x="1" y="9" width="14" height="1.6"/><rect x="1" y="12.5" width="14" height="1.6"/></svg></button>
-      <select id="line-height" title="Interligne">
-        <option value="">Interligne</option>
-        <option value="1">Simple</option>
-        <option value="1.15">1,15</option>
-        <option value="1.5">1,5</option>
-        <option value="2">Double</option>
-      </select>
-      <button data-action="outdent" title="Diminuer le retrait (⇧Tab)">⇤</button>
-      <button data-action="indent" title="Augmenter le retrait (Tab)">⇥</button>
-      <span class="sep"></span>
-      <button data-action="bulletList" title="Liste à puces (⇧⌘8)">• Liste</button>
-      <button data-action="orderedList" title="Liste numérotée (⇧⌘7)">1. Liste</button>
-      <button data-action="taskList" title="Liste de cases à cocher (⇧⌘9)">☑ Liste</button>
-      <button data-action="blockquote" title="Citation">❝</button>
-      <span class="sep"></span>
-      <button data-action="image" title="Insérer une image depuis un fichier (ou collez-la avec ⌘V)">🖼 Image</button>
-      <button data-action="table" title="Insérer un tableau">▦ Tableau</button>
-      <button data-action="pageBreak" title="Saut de page (⌘Entrée)">⤓ Saut de page</button>
-      <button data-action="pageSetup" title="Format des pages, marges, numéros de page">📄 Mise en page</button>
-      <span class="sep"></span>
-      <button data-action="outline" title="Plan du document (⇧⌘O)">☰ Plan</button>
-      <button data-action="find" title="Rechercher et remplacer (⌘F)">🔍</button>
-      <button data-action="spellcheck" title="Correcteur orthographique">ABC✓</button>
-      <span class="group" id="table-tools" hidden>
-        <button data-action="rowBefore" title="Insérer une ligne au-dessus">+ Ligne ↑</button>
-        <button data-action="rowAfter" title="Insérer une ligne en dessous">+ Ligne ↓</button>
-        <button data-action="colBefore" title="Insérer une colonne à gauche">+ Col. ←</button>
-        <button data-action="colAfter" title="Insérer une colonne à droite">+ Col. →</button>
-        <button data-action="deleteRow" title="Supprimer la ligne">− Ligne</button>
-        <button data-action="deleteCol" title="Supprimer la colonne">− Col.</button>
-        <button data-action="toggleHeaderRow" title="Première ligne en en-tête">En-tête</button>
-        <button data-action="deleteTable" title="Supprimer le tableau">Suppr. tableau</button>
-      </span>
-      <input type="file" id="image-file" accept="image/*" hidden />
+      </div>
+      <div class="toolbar" id="toolbar" role="toolbar">
+        <button data-action="find" data-icon="search" title="Rechercher et remplacer (⌘F)"></button>
+        <button data-action="undo" data-icon="undo" title="Annuler (⌘Z)"></button>
+        <button data-action="redo" data-icon="redo" title="Rétablir (⇧⌘Z)"></button>
+        <button data-action="print" data-icon="print" title="Imprimer (⌘P)"></button>
+        <button data-action="spellcheck" data-icon="spellcheck" title="Correcteur orthographique"></button>
+        <select id="zoom" title="Zoom">
+          <option value="0.5">50 %</option>
+          <option value="0.75">75 %</option>
+          <option value="0.9">90 %</option>
+          <option value="1" selected>100 %</option>
+          <option value="1.25">125 %</option>
+          <option value="1.5">150 %</option>
+          <option value="2">200 %</option>
+        </select>
+        <span class="sep"></span>
+        <select id="block-style" class="wide" title="Style de paragraphe">
+          <option value="p">Texte normal</option>
+          <option value="1">Titre</option>
+          <option value="2">Titre 1</option>
+          <option value="3">Titre 2</option>
+          <option value="4">Titre 3</option>
+        </select>
+        <span class="sep"></span>
+        <select id="font-family" class="wide" title="Police">
+          <option>Arial</option>
+          <option>Avenir Next</option>
+          <option>Baskerville</option>
+          <option>Courier New</option>
+          <option>Garamond</option>
+          <option>Georgia</option>
+          <option>Helvetica Neue</option>
+          <option>Palatino</option>
+          <option>Times New Roman</option>
+          <option>Verdana</option>
+        </select>
+        <span class="sep"></span>
+        <span class="font-size" title="Taille du texte">
+          <button data-action="sizeDown" data-icon="minus" title="Diminuer la taille (⇧⌘,)"></button>
+          <input id="font-size" type="text" inputmode="decimal" autocomplete="off" />
+          <button data-action="sizeUp" data-icon="plus" title="Augmenter la taille (⇧⌘.)"></button>
+        </span>
+        <span class="sep"></span>
+        <button data-action="bold" data-icon="bold" title="Gras (⌘B)"></button>
+        <button data-action="italic" data-icon="italic" title="Italique (⌘I)"></button>
+        <button data-action="underline" data-icon="underline" title="Souligné (⌘U)"></button>
+        <label class="color" title="Couleur du texte">
+          <span data-icon="textColor"></span>
+          <input type="color" id="text-color" value="#c0392b" />
+        </label>
+        <label class="color" title="Couleur de surlignage">
+          <span data-icon="highlight"></span>
+          <input type="color" id="highlight-color" value="#fff3a3" />
+        </label>
+        <span class="sep"></span>
+        <button data-action="link" data-icon="link" title="Insérer un lien (⌘K)"></button>
+        <button data-action="image" data-icon="image" title="Insérer une image (ou collez-la avec ⌘V)"></button>
+        <button data-action="table" data-icon="table" title="Insérer un tableau"></button>
+        <span class="sep"></span>
+        <button data-action="alignLeft" data-icon="alignLeft" title="Aligner à gauche (⇧⌘L)"></button>
+        <button data-action="alignCenter" data-icon="alignCenter" title="Centrer (⇧⌘E)"></button>
+        <button data-action="alignRight" data-icon="alignRight" title="Aligner à droite (⇧⌘R)"></button>
+        <button data-action="alignJustify" data-icon="alignJustify" title="Justifier (⇧⌘J)"></button>
+        <button data-action="lineHeight" data-icon="lineHeight" title="Interligne et espacement"></button>
+        <span class="sep"></span>
+        <button data-action="taskList" data-icon="checklist" title="Liste de cases à cocher (⇧⌘9)"></button>
+        <button data-action="bulletList" data-icon="bulletList" title="Liste à puces (⇧⌘8)"></button>
+        <button data-action="orderedList" data-icon="orderedList" title="Liste numérotée (⇧⌘7)"></button>
+        <button data-action="outdent" data-icon="outdent" title="Diminuer le retrait (⇧Tab)"></button>
+        <button data-action="indent" data-icon="indent" title="Augmenter le retrait (Tab)"></button>
+        <button data-action="clearFormat" data-icon="clearFormat" title="Effacer la mise en forme (⌘\)"></button>
+        <span class="group" id="table-tools" hidden>
+          <span class="sep"></span>
+          <button data-action="rowAfter" class="text" title="Insérer une ligne en dessous">+ Ligne</button>
+          <button data-action="colAfter" class="text" title="Insérer une colonne à droite">+ Colonne</button>
+          <button data-action="tableMenu" class="text" title="Autres actions sur le tableau">Tableau ▾</button>
+        </span>
+        <input type="file" id="image-file" accept="image/*" hidden />
+      </div>
     </header>
+
+    <div class="find-bar" id="find-bar" hidden>
+      <input id="find-input" placeholder="Rechercher dans l'onglet" />
+      <span id="find-count"></span>
+      <button data-find="prev" title="Précédent (⇧Entrée)">↑</button>
+      <button data-find="next" title="Suivant (Entrée)">↓</button>
+      <label class="inline"><input type="checkbox" id="find-case" /> Respecter la casse</label>
+      <input id="replace-input" placeholder="Remplacer par" />
+      <button data-find="replace">Remplacer</button>
+      <button data-find="replaceAll">Tout remplacer</button>
+      <button data-find="close" data-icon="close" title="Fermer (Échap)"></button>
+    </div>
+
+    <div class="workspace">
+      <!-- Panneau de gauche : onglets du document et plan de l'onglet ouvert. -->
+      <aside class="side-panel" id="side-panel">
+        <div class="panel-head">
+          <button class="round" data-panel="hide" data-icon="back" title="Masquer les onglets et le plan (⇧⌘O)"></button>
+        </div>
+        <div class="panel-title">
+          <h2>Onglets du document</h2>
+          <button class="round" data-panel="add" data-icon="plus" title="Ajouter un onglet"></button>
+        </div>
+        <ul class="tab-tree" id="tab-tree" role="tree"></ul>
+      </aside>
+      <button class="panel-show" id="panel-show" data-icon="panel" title="Afficher les onglets et le plan (⇧⌘O)" hidden></button>
+
+      <main class="desk" id="desk">
+        <div class="paper" id="paper">
+          <div class="sheets" id="sheets" aria-hidden="true"></div>
+          <div id="editor"></div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Nombre de mots pendant la saisie (Outils > Nombre de mots). -->
+    <button class="word-box" id="word-box" title="Nombre de mots (⇧⌘C)" hidden></button>
+
     <dialog id="link-dialog">
       <form method="dialog">
         <label>Adresse du lien
@@ -124,9 +149,15 @@
         </menu>
       </form>
     </dialog>
+
     <dialog id="page-dialog">
       <form method="dialog" class="page-form" novalidate>
         <h2>Mise en page</h2>
+        <fieldset>
+          <legend>Affichage</legend>
+          <label class="inline"><input type="radio" name="mode" value="pages" /> Pages</label>
+          <label class="inline"><input type="radio" name="mode" value="pageless" /> Sans pagination (défilement continu)</label>
+        </fieldset>
         <label>Format
           <select name="size">
             <option value="A4">A4 (21 × 29,7 cm)</option>
@@ -152,34 +183,71 @@
         </menu>
       </form>
     </dialog>
-    <div class="find-bar" id="find-bar" hidden>
-      <input id="find-input" placeholder="Rechercher" />
-      <span id="find-count"></span>
-      <button data-find="prev" title="Précédent (⇧Entrée)">↑</button>
-      <button data-find="next" title="Suivant (Entrée)">↓</button>
-      <label class="inline"><input type="checkbox" id="find-case" /> Aa</label>
-      <input id="replace-input" placeholder="Remplacer par" />
-      <button data-find="replace">Remplacer</button>
-      <button data-find="replaceAll">Tout remplacer</button>
-      <button data-find="close" title="Fermer (Échap)">✕</button>
-    </div>
-    <div class="workspace">
-    <nav class="outline" id="outline" hidden>
-      <h2>Plan</h2>
-      <ol id="outline-list"></ol>
-      <p class="empty" id="outline-empty">Les titres du document apparaîtront ici.</p>
-    </nav>
-    <main class="desk">
-      <div class="paper" id="paper">
-        <div class="sheets" id="sheets" aria-hidden="true"></div>
-        <div id="editor"></div>
-      </div>
-    </main>
-    </div>
-    <footer class="status">
-      <span><span id="file-name">Sans titre</span> <span id="save-status"></span></span>
-      <span><span id="page-count">1 page</span> · <span id="word-count">0 mot</span></span>
-    </footer>
+
+    <dialog id="styles-dialog" class="styles-dialog">
+      <form method="dialog">
+        <h2>Styles de paragraphe</h2>
+        <p class="hint">Modifiez un style : tous les paragraphes de ce style changent, dans tous les onglets.</p>
+        <div class="styles-layout">
+          <ul class="style-list" id="style-list"></ul>
+          <div class="style-form" id="style-form">
+            <label>Police
+              <select name="fontFamily"></select>
+            </label>
+            <div class="row">
+              <label>Taille (pt) <input type="number" name="fontSize" min="6" max="96" step="0.5" /></label>
+              <label>Couleur <input type="color" name="color" /></label>
+            </div>
+            <div class="row">
+              <label class="inline"><input type="checkbox" name="bold" /> Gras</label>
+              <label class="inline"><input type="checkbox" name="italic" /> Italique</label>
+            </div>
+            <div class="row">
+              <label>Interligne
+                <select name="lineHeight">
+                  <option value="1">Simple</option>
+                  <option value="1.15">1,15</option>
+                  <option value="1.25">1,25</option>
+                  <option value="1.5">1,5</option>
+                  <option value="2">Double</option>
+                </select>
+              </label>
+              <label>Espace avant (pt) <input type="number" name="spaceBefore" min="0" max="96" step="1" /></label>
+              <label>Espace après (pt) <input type="number" name="spaceAfter" min="0" max="96" step="1" /></label>
+            </div>
+            <button type="button" id="style-reset" class="link-button">Revenir à la valeur d'origine de ce style</button>
+          </div>
+        </div>
+        <menu>
+          <button type="button" id="styles-save-default" title="Les nouveaux documents utiliseront ces styles">Enregistrer comme styles par défaut</button>
+          <button value="ok" type="submit" class="primary">Fermer</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="count-dialog" class="count-dialog">
+      <form method="dialog">
+        <h2>Nombre de mots</h2>
+        <table id="count-table"></table>
+        <label class="inline"><input type="checkbox" id="count-live" /> Afficher le nombre de mots pendant la saisie</label>
+        <menu>
+          <button value="ok" type="submit" class="primary">OK</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="rename-dialog">
+      <form method="dialog">
+        <label>Nom de l'onglet
+          <input type="text" id="rename-input" autocomplete="off" />
+        </label>
+        <menu>
+          <button value="cancel" type="submit" formnovalidate>Annuler</button>
+          <button value="ok" type="submit" class="primary">OK</button>
+        </menu>
+      </form>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -55,7 +55,8 @@ fn garde_toute_la_mise_en_forme() {
 fn garde_tableaux_et_images() {
     let json = include_str!("fixtures/tiptap-table-image.json");
     let doc = Document::from_json(json).expect("JSON TipTap lisible");
-    assert_eq!(doc.word_count(), 5);
+    // « Tableau : Nom Âge Ada » : le « : » isolé n'est pas un mot.
+    assert_eq!(doc.word_count(), 4);
     let mut back: serde_json::Value = serde_json::from_str(&doc.to_json().unwrap()).unwrap();
     let mut original: serde_json::Value = serde_json::from_str(json).unwrap();
     normalise(&mut back);

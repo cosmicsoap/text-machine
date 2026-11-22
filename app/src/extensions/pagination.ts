@@ -17,6 +17,8 @@ export interface PageSetup {
   /** Marges en millimètres. */
   margins: { top: number; bottom: number; left: number; right: number };
   pageNumbers: boolean;
+  /** Affichage continu, sans pages (l'export PDF garde les pages). */
+  pageless: boolean;
 }
 
 export const DEFAULT_PAGE_SETUP: PageSetup = {
@@ -24,6 +26,7 @@ export const DEFAULT_PAGE_SETUP: PageSetup = {
   landscape: false,
   margins: { top: 25.4, bottom: 25.4, left: 25.4, right: 25.4 },
   pageNumbers: true,
+  pageless: false,
 };
 
 const SIZES_MM = { A4: [210, 297], Letter: [215.9, 279.4] } as const;
@@ -83,12 +86,17 @@ interface Layout {
 }
 
 function computeLayout(view: EditorView, setup: PageSetup): Layout {
-  const { height } = pageSizePx(setup);
+  if (setup.pageless) return { breaks: [], pages: 1 };
+  const { width, height } = pageSizePx(setup);
   const top = mmToPx(setup.margins.top);
   const bottom = mmToPx(setup.margins.bottom);
   const usable = height - top - bottom;
   const root = view.dom as HTMLElement;
-  const rootTop = root.getBoundingClientRect().top + top;
+  // Avec le zoom, les mesures à l'écran sont agrandies : on les ramène en
+  // pixels de la page.
+  const rootRect = root.getBoundingClientRect();
+  const scale = rootRect.width > 0 ? rootRect.width / width : 1;
+  const rootTop = rootRect.top / scale + top;
 
   const breaks: Layout["breaks"] = [];
   let spacers = 0; // hauteur des espaces déjà présents au-dessus du bloc courant
@@ -101,10 +109,10 @@ function computeLayout(view: EditorView, setup: PageSetup): Layout {
     if (!dom || !(dom instanceof HTMLElement)) return;
     // Les espaces insérés avant ce bloc ne comptent pas dans sa position.
     const prev = dom.previousElementSibling;
-    if (prev?.classList.contains("page-spacer")) spacers += prev.getBoundingClientRect().height;
+    if (prev?.classList.contains("page-spacer")) spacers += prev.getBoundingClientRect().height / scale;
     const rect = dom.getBoundingClientRect();
-    const blockTop = rect.top - rootTop - spacers;
-    const blockBottom = rect.bottom - rootTop - spacers;
+    const blockTop = rect.top / scale - rootTop - spacers;
+    const blockBottom = rect.bottom / scale - rootTop - spacers;
 
     if (!first && (forceBreak || blockBottom - pageStart > usable)) {
       const used = blockTop - pageStart;

@@ -11,7 +11,7 @@
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use tm_model::{
     Block, BlockStyle, CellAttrs, CodeBlockAttrs, Document, HeadingAttrs, ImageAttrs, Inline,
-    LinkAttrs, Mark, OrderedListAttrs, TaskItemAttrs,
+    LinkAttrs, Mark, OrderedListAttrs, TabTitleAttrs, TaskItemAttrs,
 };
 
 // --- Export ------------------------------------------------------------------
@@ -46,7 +46,11 @@ fn block_to_markdown(block: &Block) -> Option<String> {
             escape_line_start(&text)
         }
         Block::Heading { attrs, content } => {
-            format!("{} {}", "#".repeat(attrs.level.clamp(1, 6) as usize), inlines_to_markdown(content))
+            format!(
+                "{} {}",
+                "#".repeat(attrs.level.clamp(1, 6) as usize),
+                inlines_to_markdown(content)
+            )
         }
         Block::Blockquote { content } => prefix_lines(&blocks_to_markdown(content), "> ", "> "),
         Block::BulletList { content } => list_items(content, |_| "- ".to_string()),
@@ -68,10 +72,20 @@ fn block_to_markdown(block: &Block) -> Option<String> {
                 })
                 .collect();
             let fence = if code.contains("```") { "~~~" } else { "```" };
-            format!("{fence}{}\n{code}\n{fence}", attrs.language.as_deref().unwrap_or(""))
+            format!(
+                "{fence}{}\n{code}\n{fence}",
+                attrs.language.as_deref().unwrap_or("")
+            )
         }
         Block::HorizontalRule => "---".into(),
         Block::PageBreak => return None,
+        // Un onglet : un commentaire invisible (pour le relire) puis son titre.
+        Block::TabTitle { attrs } => format!(
+            "{}\n{} {}",
+            tab_marker(attrs.level),
+            "#".repeat(attrs.level.clamp(1, 3) as usize),
+            escape(&attrs.title)
+        ),
         Block::Image { attrs } => format!(
             "![{}]({})",
             escape(attrs.alt.as_deref().unwrap_or("")),
@@ -82,6 +96,29 @@ fn block_to_markdown(block: &Block) -> Option<String> {
             return None
         }
     })
+}
+
+/// Commentaire qui annonce un titre d'onglet dans un fichier Markdown.
+fn tab_marker(level: u8) -> String {
+    format!("<!-- text-machine:onglet niveau={level} -->")
+}
+
+/// Lit un commentaire `<!-- text-machine:onglet niveau=N -->`.
+fn parse_tab_marker(html: &str) -> Option<u8> {
+    let inner = html
+        .trim()
+        .strip_prefix("<!--")?
+        .strip_suffix("-->")?
+        .trim();
+    let level = inner.strip_prefix("text-machine:onglet")?.trim();
+    let level = level.strip_prefix("niveau=").unwrap_or("1");
+    Some(
+        level
+            .trim()
+            .parse::<u8>()
+            .unwrap_or(1)
+            .clamp(1, tm_model::MAX_TAB_LEVEL),
+    )
 }
 
 /// Contenu d'un élément de liste : une sous-liste suit directement le texte
@@ -236,7 +273,10 @@ fn text_to_markdown(text: &str, marks: &[Mark]) -> String {
         s = format!("**{s}**");
     }
     if let Some(Mark::Link { attrs }) = marks.iter().find(|m| matches!(m, Mark::Link { .. })) {
-        s = format!("[{s}]({})", attrs.href.replace(' ', "%20").replace(')', "%29"));
+        s = format!(
+            "[{s}]({})",
+            attrs.href.replace(' ', "%20").replace(')', "%29")
+        );
     }
     format!("{lead}{s}{trail}")
 }
@@ -270,7 +310,8 @@ fn escape_line_start(text: &str) -> String {
 /// Lit un texte Markdown.
 pub fn import(markdown: &str) -> Document {
     let mut b = Builder::default();
-    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     for event in Parser::new_ext(markdown, options) {
         b.event(event);
     }
@@ -318,6 +359,9 @@ struct Builder {
     text: Option<(TextKind, Vec<Inline>)>,
     marks: Vec<Mark>,
     image: Option<(String, String)>,
+    /// Niveau annoncé par un commentaire d'onglet : le titre qui suit est
+    /// celui d'un onglet.
+    tab: Option<u8>,
 }
 
 struct ContainerSlot(Container);
@@ -325,7 +369,8 @@ struct ContainerSlot(Container);
 impl Builder {
     fn top(&mut self) -> &mut Vec<Block> {
         if self.stack.is_empty() {
-            self.stack.push((ContainerSlot(Container::Root), Vec::new()));
+            self.stack
+                .push((ContainerSlot(Container::Root), Vec::new()));
         }
         &mut self.stack.last_mut().unwrap().1
     }
@@ -425,6 +470,18 @@ impl Builder {
                     content,
                 }
             }
+            TextKind::Heading(_) if self.tab.is_some() => Block::TabTitle {
+                attrs: TabTitleAttrs {
+                    level: self.tab.take().unwrap_or(1),
+                    title: Document::new(vec![Block::Paragraph {
+                        attrs: BlockStyle::default(),
+                        content,
+                    }])
+                    .plain_text()
+                    .trim()
+                    .to_string(),
+                },
+            },
             TextKind::Heading(level) => Block::Heading {
                 attrs: HeadingAttrs {
                     level,
@@ -459,8 +516,13 @@ impl Builder {
         }
         let content = &mut self.text.as_mut().unwrap().1;
         // Fusionne avec le texte précédent s'il a la même mise en forme.
-        if let (Some(Inline::Text { text: prev, marks: pm }), Inline::Text { text, marks }) =
-            (content.last_mut(), &inline)
+        if let (
+            Some(Inline::Text {
+                text: prev,
+                marks: pm,
+            }),
+            Inline::Text { text, marks },
+        ) = (content.last_mut(), &inline)
         {
             if pm == marks {
                 prev.push_str(text);
@@ -487,7 +549,9 @@ impl Builder {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => self.start_text(TextKind::Paragraph),
-                Tag::Heading { level, .. } => self.start_text(TextKind::Heading(heading_level(level))),
+                Tag::Heading { level, .. } => {
+                    self.start_text(TextKind::Heading(heading_level(level)))
+                }
                 Tag::CodeBlock(kind) => self.start_text(TextKind::Code(match kind {
                     CodeBlockKind::Fenced(lang) if !lang.is_empty() => Some(lang.to_string()),
                     _ => None,
@@ -513,7 +577,9 @@ impl Builder {
                         href: dest_url.to_string(),
                     },
                 }),
-                Tag::Image { dest_url, .. } => self.image = Some((dest_url.to_string(), String::new())),
+                Tag::Image { dest_url, .. } => {
+                    self.image = Some((dest_url.to_string(), String::new()))
+                }
                 _ => {}
             },
             Event::End(tag) => match tag {
@@ -555,9 +621,16 @@ impl Builder {
             Event::Text(text) => self.push_text(&text, None),
             Event::Code(code) => self.push_text(&code, Some(Mark::Code)),
             Event::InlineHtml(html)
-                if matches!(html.trim().to_ascii_lowercase().as_str(), "<br>" | "<br/>" | "<br />") =>
+                if matches!(
+                    html.trim().to_ascii_lowercase().as_str(),
+                    "<br>" | "<br/>" | "<br />"
+                ) =>
             {
                 self.push_inline(Inline::HardBreak)
+            }
+            Event::Html(html) if parse_tab_marker(&html).is_some() => {
+                self.flush_text();
+                self.tab = parse_tab_marker(&html);
             }
             Event::Html(html) | Event::InlineHtml(html) => self.push_text(&html, None),
             Event::SoftBreak => self.push_text(" ", None),
@@ -567,7 +640,8 @@ impl Builder {
                 self.top().push(Block::HorizontalRule);
             }
             Event::TaskListMarker(checked) => {
-                if let Some((ContainerSlot(Container::Item { checked: c }), _)) = self.stack.last_mut()
+                if let Some((ContainerSlot(Container::Item { checked: c }), _)) =
+                    self.stack.last_mut()
                 {
                     *c = Some(checked);
                 }
@@ -662,9 +736,14 @@ let x = 1;
                 {"type":"tableCell","attrs":{"colspan":1,"rowspan":1,"colwidth":null},"content":[{"type":"paragraph","content":[{"type":"text","text":"12"}]}]}]}]}]}"#;
         let doc: Document = serde_json::from_str(json).unwrap();
         let md = export(&doc);
-        assert_eq!(md, "| Produit |     |\n| ------- | --- |\n| a<br>b  | 12  |\n");
+        assert_eq!(
+            md,
+            "| Produit |     |\n| ------- | --- |\n| a<br>b  | 12  |\n"
+        );
         let back = import(&md);
-        let Block::Table { content: rows } = &back.content[0] else { panic!("{back:?}") };
+        let Block::Table { content: rows } = &back.content[0] else {
+            panic!("{back:?}")
+        };
         assert_eq!(rows.len(), 2);
         // Le retour à la ligne revient comme tel, pas comme « <br> ».
         assert_eq!(export(&back), md);
@@ -673,9 +752,16 @@ let x = 1;
     #[test]
     fn tableau_vide_reste_vide() {
         // Cellules vraiment vides, et « &nbsp; » d'une version précédente.
-        for md in ["|  |  |\n| --- | --- |\n|  |  |\n", "| &nbsp; | &nbsp; |\n| --- | --- |\n| &nbsp; | &nbsp; |\n"] {
+        for md in [
+            "|  |  |\n| --- | --- |\n|  |  |\n",
+            "| &nbsp; | &nbsp; |\n| --- | --- |\n| &nbsp; | &nbsp; |\n",
+        ] {
             let doc = import(md);
-            assert_eq!(export(&doc), "|     |     |\n| --- | --- |\n|     |     |\n", "{md}");
+            assert_eq!(
+                export(&doc),
+                "|     |     |\n| --- | --- |\n|     |     |\n",
+                "{md}"
+            );
         }
     }
 
@@ -683,7 +769,10 @@ let x = 1;
     fn import_reconnait_les_structures() {
         let doc = import(SAMPLE);
         assert!(matches!(&doc.content[0], Block::Heading { attrs, .. } if attrs.level == 1));
-        assert!(doc.content.iter().any(|b| matches!(b, Block::TaskList { .. })));
+        assert!(doc
+            .content
+            .iter()
+            .any(|b| matches!(b, Block::TaskList { .. })));
         assert!(doc.content.iter().any(|b| matches!(b, Block::Table { .. })));
         assert!(doc.content.iter().any(|b| matches!(b, Block::Image { .. })));
         assert!(doc
@@ -705,5 +794,32 @@ let x = 1;
         let doc = import_plain_text("ligne 1\n\nligne 3");
         assert_eq!(doc.content.len(), 3);
         assert_eq!(export_plain_text(&doc), "ligne 1\n\nligne 3\n");
+    }
+
+    #[test]
+    fn onglets_aller_retour() {
+        use tm_model::{flatten_tabs, split_tabs, Tab};
+        let mut first = Tab::new("Chapitre 1", Document::new(vec![Block::paragraph("Début")]));
+        first.children.push(Tab::new(
+            "Scène",
+            Document::new(vec![
+                Block::heading(2, "Titre 1"),
+                Block::paragraph("Suite"),
+            ]),
+        ));
+        let tabs = vec![
+            first,
+            Tab::new("Annexe", Document::new(vec![Block::paragraph("Fin")])),
+        ];
+        let md = export(&flatten_tabs(&tabs));
+        assert!(
+            md.starts_with("<!-- text-machine:onglet niveau=1 -->\n# Chapitre 1\n\nDébut"),
+            "{md}"
+        );
+        assert!(
+            md.contains("<!-- text-machine:onglet niveau=2 -->\n## Scène\n\n## Titre 1"),
+            "{md}"
+        );
+        assert_eq!(split_tabs(import(&md)), tabs);
     }
 }

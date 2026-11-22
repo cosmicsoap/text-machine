@@ -92,9 +92,17 @@ pub enum Block {
         #[serde(default)]
         content: Vec<Block>,
     },
+    /// Titre d'onglet. N'existe pas dans l'éditeur (chaque onglet y a son
+    /// propre document) : il sert seulement à mettre plusieurs onglets à la
+    /// suite dans un fichier Word, Markdown ou texte (voir [`flatten_tabs`]).
+    TabTitle {
+        attrs: TabTitleAttrs,
+    },
     /// Image. Pour l'instant l'image elle-même est dans `src` (adresse
     /// `data:` en base64) ; elle ira plus tard dans la table `media` du format.
-    Image { attrs: ImageAttrs },
+    Image {
+        attrs: ImageAttrs,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,6 +140,13 @@ pub struct ImageAttrs {
     pub width: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TabTitleAttrs {
+    /// 1 = onglet, 2 = sous-onglet, 3 = sous-sous-onglet.
+    pub level: u8,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -212,7 +227,9 @@ pub enum Mark {
     Underline,
     Strike,
     Code,
-    Link { attrs: LinkAttrs },
+    Link {
+        attrs: LinkAttrs,
+    },
     /// Police, taille et couleurs du texte.
     TextStyle {
         #[serde(default)]
@@ -311,6 +328,10 @@ impl Block {
                     block.write_plain_text(out);
                 }
             }
+            Block::TabTitle { attrs } => {
+                out.push_str(&attrs.title);
+                out.push('\n');
+            }
             Block::HorizontalRule | Block::PageBreak | Block::Image { .. } => out.push('\n'),
         }
     }
@@ -330,9 +351,16 @@ impl Document {
         out
     }
 
-    /// Nombre de mots (suites de caractères séparées par des espaces).
+    /// Nombre de mots : suites de caractères séparées par des espaces, qui
+    /// contiennent au moins une lettre ou un chiffre (le « ! » isolé de la
+    /// typographie française n'est pas un mot).
     pub fn word_count(&self) -> usize {
-        self.plain_text().split_whitespace().count()
+        self.stats().words
+    }
+
+    /// Mots et signes (caractères), avec et sans espaces.
+    pub fn stats(&self) -> TextStats {
+        TextStats::of(&self.plain_text())
     }
 
     /// Appelle `f` sur chaque image du document, où qu'elle soit (listes,
@@ -370,6 +398,250 @@ impl Document {
     }
 }
 
+/// Statistiques d'un texte, comme « Outils > Nombre de mots » de Google Docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextStats {
+    pub words: usize,
+    /// Signes espaces compris (les fins de paragraphe ne comptent pas).
+    pub characters: usize,
+    /// Signes sans les espaces.
+    pub characters_no_spaces: usize,
+}
+
+impl TextStats {
+    pub fn of(text: &str) -> Self {
+        let words = text
+            .split_whitespace()
+            .filter(|w| w.chars().any(char::is_alphanumeric))
+            .count();
+        let characters = text.chars().filter(|c| *c != '\n').count();
+        let characters_no_spaces = text.chars().filter(|c| !c.is_whitespace()).count();
+        Self {
+            words,
+            characters,
+            characters_no_spaces,
+        }
+    }
+}
+
+// --- Onglets -------------------------------------------------------------------
+
+/// Profondeur maximale des onglets (onglet, sous-onglet, sous-sous-onglet).
+pub const MAX_TAB_LEVEL: u8 = 3;
+
+/// Un onglet du document, comme dans Google Docs : un titre, son propre
+/// contenu, et éventuellement des sous-onglets.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tab {
+    #[serde(default)]
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub document: Document,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<Tab>,
+}
+
+impl Tab {
+    pub fn new(title: impl Into<String>, document: Document) -> Self {
+        Self {
+            id: String::new(),
+            title: title.into(),
+            document,
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Titre donné au premier onglet d'un document qui n'en a pas.
+pub const DEFAULT_TAB_TITLE: &str = "Onglet 1";
+
+fn count_tabs(tabs: &[Tab]) -> usize {
+    tabs.iter().map(|t| 1 + count_tabs(&t.children)).sum()
+}
+
+/// Met tous les onglets à la suite dans un seul document, pour les formats
+/// qui ne connaissent pas les onglets (Word, Markdown, texte). Chaque onglet
+/// commence par un [`Block::TabTitle`]. Un document d'un seul onglet est
+/// écrit tel quel, sans titre d'onglet.
+pub fn flatten_tabs(tabs: &[Tab]) -> Document {
+    if count_tabs(tabs) <= 1 {
+        return tabs.first().map(|t| t.document.clone()).unwrap_or_default();
+    }
+    fn walk(tabs: &[Tab], level: u8, out: &mut Vec<Block>) {
+        for tab in tabs {
+            out.push(Block::TabTitle {
+                attrs: TabTitleAttrs {
+                    level: level.min(MAX_TAB_LEVEL),
+                    title: tab.title.clone(),
+                },
+            });
+            out.extend(tab.document.content.iter().cloned());
+            walk(&tab.children, level + 1, out);
+        }
+    }
+    let mut content = Vec::new();
+    walk(tabs, 1, &mut content);
+    Document::new(content)
+}
+
+/// L'inverse de [`flatten_tabs`] : découpe un document aux titres d'onglet.
+/// Sans titre d'onglet, le document entier devient un seul onglet.
+pub fn split_tabs(doc: Document) -> Vec<Tab> {
+    let mut flat: Vec<(u8, Tab)> = Vec::new();
+    let mut leading = Vec::new();
+    for block in doc.content {
+        match block {
+            Block::TabTitle { attrs } => flat.push((
+                attrs.level.clamp(1, MAX_TAB_LEVEL),
+                Tab::new(attrs.title, Document::default()),
+            )),
+            other => match flat.last_mut() {
+                Some((_, tab)) => tab.document.content.push(other),
+                None => leading.push(other),
+            },
+        }
+    }
+    let has_text = |blocks: &[Block]| {
+        blocks
+            .iter()
+            .any(|b| !matches!(b, Block::Paragraph { content, .. } if content.is_empty()))
+    };
+    if has_text(&leading) || flat.is_empty() {
+        flat.insert(0, (1, Tab::new(DEFAULT_TAB_TITLE, Document::new(leading))));
+    }
+    // Reconstruit l'arbre : un onglet de niveau N va dans le dernier onglet
+    // de niveau N - 1 (ou au premier niveau s'il n'y en a pas).
+    fn insert(tabs: &mut Vec<Tab>, level: u8, tab: Tab) {
+        match tabs.last_mut() {
+            Some(parent) if level > 1 => insert(&mut parent.children, level - 1, tab),
+            _ => tabs.push(tab),
+        }
+    }
+    let mut tabs = Vec::new();
+    for (level, mut tab) in flat {
+        if tab.document.content.is_empty() {
+            tab.document.content.push(Block::Paragraph {
+                attrs: BlockStyle::default(),
+                content: Vec::new(),
+            });
+        }
+        insert(&mut tabs, level, tab);
+    }
+    tabs
+}
+
+// --- Styles de paragraphe --------------------------------------------------------
+
+/// Un style de paragraphe modifiable (« Texte normal », « Titre 1 »…).
+/// Les tailles et espacements sont en points.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ParagraphStyle {
+    /// Police ; absente : celle du texte normal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    pub font_size: f64,
+    pub bold: bool,
+    pub italic: bool,
+    /// Couleur `#rrggbb` ; absente : noir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Interligne, en multiple de la taille du texte.
+    pub line_height: f64,
+    pub space_before: f64,
+    pub space_after: f64,
+}
+
+impl Default for ParagraphStyle {
+    fn default() -> Self {
+        Self {
+            font_family: None,
+            font_size: 12.0,
+            bold: false,
+            italic: false,
+            color: None,
+            line_height: 1.5,
+            space_before: 0.0,
+            space_after: 6.0,
+        }
+    }
+}
+
+impl ParagraphStyle {
+    fn heading(font_size: f64, space_before: f64, space_after: f64) -> Self {
+        Self {
+            font_size,
+            line_height: 1.25,
+            space_before,
+            space_after,
+            ..Self::default()
+        }
+    }
+}
+
+/// La feuille de styles du document : un style par type de paragraphe.
+/// Les titres de niveau 1 à 4 de l'éditeur sont « Titre », « Titre 1 »,
+/// « Titre 2 » et « Titre 3 ».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StyleSheet {
+    pub normal: ParagraphStyle,
+    pub title: ParagraphStyle,
+    pub heading1: ParagraphStyle,
+    pub heading2: ParagraphStyle,
+    pub heading3: ParagraphStyle,
+}
+
+impl Default for StyleSheet {
+    fn default() -> Self {
+        Self {
+            normal: ParagraphStyle {
+                font_family: Some("Georgia".into()),
+                ..ParagraphStyle::default()
+            },
+            title: ParagraphStyle::heading(26.0, 0.0, 6.0),
+            heading1: ParagraphStyle::heading(20.0, 20.0, 6.0),
+            heading2: ParagraphStyle::heading(16.0, 18.0, 4.0),
+            heading3: ParagraphStyle {
+                color: Some("#434343".into()),
+                ..ParagraphStyle::heading(14.0, 14.0, 4.0)
+            },
+        }
+    }
+}
+
+impl StyleSheet {
+    /// Le style d'un titre de niveau 1 à 4 (1 = « Titre »).
+    pub fn heading(&self, level: u8) -> &ParagraphStyle {
+        match level {
+            1 => &self.title,
+            2 => &self.heading1,
+            3 => &self.heading2,
+            _ => &self.heading3,
+        }
+    }
+
+    pub fn heading_mut(&mut self, level: u8) -> &mut ParagraphStyle {
+        match level {
+            1 => &mut self.title,
+            2 => &mut self.heading1,
+            3 => &mut self.heading2,
+            _ => &mut self.heading3,
+        }
+    }
+
+    /// Police effective d'un style (celle du texte normal par défaut).
+    pub fn font_of<'a>(&'a self, style: &'a ParagraphStyle) -> Option<&'a str> {
+        style
+            .font_family
+            .as_deref()
+            .or(self.normal.font_family.as_deref())
+    }
+}
+
 /// Format des pages du document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -381,6 +653,9 @@ pub struct PageSetup {
     pub margins: Margins,
     /// Afficher le numéro en bas de chaque page.
     pub page_numbers: bool,
+    /// Affichage continu, sans pages (« Sans pagination » de Google Docs).
+    /// Les exports PDF et l'impression restent découpés en pages.
+    pub pageless: bool,
 }
 
 impl Default for PageSetup {
@@ -390,6 +665,7 @@ impl Default for PageSetup {
             landscape: false,
             margins: Margins::default(),
             page_numbers: true,
+            pageless: false,
         }
     }
 }
@@ -490,8 +766,59 @@ mod tests {
     #[test]
     fn compte_les_mots() {
         let doc = Document::from_json(TIPTAP_JSON).unwrap();
-        // Bonjour / Un mot en gras / un lien / point un / let x = 1;
-        assert_eq!(doc.word_count(), 1 + 4 + 2 + 2 + 4);
+        // Bonjour / Un mot en gras / un lien / point un / let x 1; (« = » n'est pas un mot)
+        assert_eq!(doc.word_count(), 1 + 4 + 2 + 2 + 3);
+    }
+
+    #[test]
+    fn compte_les_signes() {
+        let doc = Document::new(vec![
+            Block::paragraph("Bonjour !"),
+            Block::paragraph("Ça va ?"),
+        ]);
+        let s = doc.stats();
+        assert_eq!(s.words, 3);
+        assert_eq!(s.characters, 9 + 7);
+        assert_eq!(s.characters_no_spaces, 8 + 5);
+    }
+
+    #[test]
+    fn onglets_a_plat_et_retour() {
+        let mut parent = Tab::new("Chapitre 1", Document::new(vec![Block::paragraph("a")]));
+        parent.children.push(Tab::new(
+            "Scène 1",
+            Document::new(vec![Block::paragraph("b")]),
+        ));
+        let tabs = vec![
+            parent,
+            Tab::new("Chapitre 2", Document::new(vec![Block::paragraph("c")])),
+        ];
+        let flat = flatten_tabs(&tabs);
+        assert_eq!(flat.content.len(), 6);
+        assert_eq!(
+            flat.plain_text(),
+            "Chapitre 1\na\nScène 1\nb\nChapitre 2\nc\n"
+        );
+        assert_eq!(split_tabs(flat), tabs);
+    }
+
+    #[test]
+    fn un_seul_onglet_reste_un_document_simple() {
+        let doc = Document::new(vec![Block::paragraph("texte")]);
+        let tabs = vec![Tab::new("Onglet 1", doc.clone())];
+        assert_eq!(flatten_tabs(&tabs), doc);
+        assert_eq!(split_tabs(doc), tabs);
+    }
+
+    #[test]
+    fn styles_par_defaut_en_json() {
+        let json = serde_json::to_string(&StyleSheet::default()).unwrap();
+        let back: StyleSheet = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, StyleSheet::default());
+        // Champs absents : valeurs par défaut.
+        let partial: StyleSheet = serde_json::from_str(r#"{"title":{"fontSize":30}}"#).unwrap();
+        assert_eq!(partial.title.font_size, 30.0);
+        assert_eq!(partial.normal, StyleSheet::default().normal);
     }
 
     #[test]

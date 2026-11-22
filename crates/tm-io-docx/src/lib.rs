@@ -8,16 +8,17 @@
 
 mod import;
 
-pub use import::{import, open};
+pub use import::{import, open, Imported};
 
 use base64::Engine;
 use docx_rs::{
-    AbstractNumbering, AlignmentType, ParagraphBorder, ParagraphBorderPosition, ParagraphBorders, BreakType, Docx, Footer, Hyperlink, HyperlinkType,
+    AbstractNumbering, AlignmentType, BreakType, Docx, Footer, Hyperlink, HyperlinkType,
     IndentLevel, Level, LevelJc, LevelText, LineSpacing, LineSpacingType, NumberFormat, Numbering,
-    NumberingId, PageMargin, PageNum, PageOrientationType, Paragraph, Pic, Run, RunFonts, Shading,
-    SpecialIndentType, Start, Style, StyleType, Table, TableCell, TableRow, VertAlignType,
+    NumberingId, PageMargin, PageNum, PageOrientationType, Paragraph, ParagraphBorder,
+    ParagraphBorderPosition, ParagraphBorders, Pic, Run, RunFonts, Shading, SpecialIndentType,
+    Start, Style, StyleType, Table, TableCell, TableRow, VertAlignType,
 };
-use tm_model::{Block, BlockStyle, Document, Inline, Mark, PageSetup};
+use tm_model::{Block, BlockStyle, Document, Inline, Mark, PageSetup, ParagraphStyle, StyleSheet};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DocxError {
@@ -30,9 +31,11 @@ pub enum DocxError {
 /// Citations : couleur du texte et du trait à gauche.
 const QUOTE_TEXT: &str = "5F6670";
 const QUOTE_BORDER: &str = "D6D9DE";
-/// Police et taille par défaut, les mêmes que dans l'éditeur.
+/// Police si la feuille de styles n'en donne aucune.
 const DEFAULT_FONT: &str = "Georgia";
-const DEFAULT_SIZE_HALF_POINTS: usize = 24;
+/// Styles Word des titres d'onglet (« TMTab1 » = onglet, « TMTab2 » =
+/// sous-onglet…). Ils permettent de retrouver les onglets à l'ouverture.
+pub(crate) const TAB_STYLE_PREFIX: &str = "TMTab";
 /// 1 mm en vingtièmes de point (unité de Word pour les longueurs).
 const TWIPS_PER_MM: f64 = 1440.0 / 25.4;
 /// Un cran de retrait : 1,27 cm, comme dans l'éditeur.
@@ -41,9 +44,10 @@ const INDENT_STEP_TWIPS: i32 = 720;
 const EMU_PER_PX: f64 = 9525.0;
 
 /// Exporte le document en `.docx` (le contenu du fichier).
-pub fn export(doc: &Document, page: &PageSetup) -> Result<Vec<u8>, DocxError> {
-    let mut w = Writer::new(page);
-    for block in &doc.content {
+pub fn export(doc: &Document, page: &PageSetup, styles: &StyleSheet) -> Result<Vec<u8>, DocxError> {
+    let mut w = Writer::new(page, styles);
+    for (i, block) in doc.content.iter().enumerate() {
+        w.first = i == 0;
         w.block(block, &Ctx::default());
     }
     let mut out = std::io::Cursor::new(Vec::new());
@@ -55,8 +59,13 @@ pub fn export(doc: &Document, page: &PageSetup) -> Result<Vec<u8>, DocxError> {
 }
 
 /// Exporte le document dans un fichier `.docx`.
-pub fn save(path: impl AsRef<std::path::Path>, doc: &Document, page: &PageSetup) -> Result<(), DocxError> {
-    std::fs::write(path, export(doc, page)?)?;
+pub fn save(
+    path: impl AsRef<std::path::Path>,
+    doc: &Document,
+    page: &PageSetup,
+    styles: &StyleSheet,
+) -> Result<(), DocxError> {
+    std::fs::write(path, export(doc, page, styles)?)?;
     Ok(())
 }
 
@@ -71,16 +80,56 @@ struct Ctx {
     code: bool,
     /// Cellule d'en-tête de tableau : texte en gras.
     bold: bool,
+    /// Paragraphe de titre : le style Word donne déjà la mise en forme.
+    heading: bool,
 }
 
 struct Writer {
     docx: Docx,
     next_numbering: usize,
     content_width_px: f64,
+    /// Gras, italique et couleur du texte normal (Word ne les met pas dans
+    /// les réglages par défaut : on les ajoute à chaque morceau de texte).
+    normal: ParagraphStyle,
+    /// Premier bloc du document (pas de saut de page avant un onglet).
+    first: bool,
+}
+
+/// Espacement Word (vingtièmes de point) d'un style.
+fn spacing(style: &ParagraphStyle) -> LineSpacing {
+    LineSpacing::new()
+        .line_rule(LineSpacingType::Auto)
+        .line((style.line_height * 240.0).round() as i32)
+        .before((style.space_before * 20.0).round() as u32)
+        .after((style.space_after * 20.0).round() as u32)
+}
+
+/// Style Word de paragraphe à partir d'un style de la feuille.
+fn word_style(id: &str, name: &str, style: &ParagraphStyle) -> Style {
+    let mut s = Style::new(id, StyleType::Paragraph)
+        .name(name)
+        .based_on("Normal")
+        .next("Normal")
+        .q_format(true)
+        .size((style.font_size * 2.0).round() as usize)
+        .line_spacing(spacing(style));
+    if let Some(font) = style.font_family.as_deref() {
+        s = s.fonts(fonts(font));
+    }
+    if style.bold {
+        s = s.bold();
+    }
+    if style.italic {
+        s = s.italic();
+    }
+    if let Some(c) = hex(style.color.as_deref()) {
+        s = s.color(c);
+    }
+    s
 }
 
 impl Writer {
-    fn new(page: &PageSetup) -> Self {
+    fn new(page: &PageSetup, sheet: &StyleSheet) -> Self {
         let (w_mm, h_mm) = page.dimensions_mm();
         let m = &page.margins;
         let twips = |mm: f64| (mm * TWIPS_PER_MM).round() as i32;
@@ -95,14 +144,11 @@ impl Writer {
                     .header(twips(m.top / 2.0))
                     .footer(twips(m.bottom / 2.0)),
             )
-            .default_fonts(fonts(DEFAULT_FONT))
-            .default_size(DEFAULT_SIZE_HALF_POINTS)
-            .default_line_spacing(
-                LineSpacing::new()
-                    .line_rule(LineSpacingType::Auto)
-                    .line(360)
-                    .after(120),
-            );
+            .default_fonts(fonts(
+                sheet.normal.font_family.as_deref().unwrap_or(DEFAULT_FONT),
+            ))
+            .default_size((sheet.normal.font_size * 2.0).round() as usize)
+            .default_line_spacing(spacing(&sheet.normal));
         if page.landscape {
             docx = docx.page_orient(PageOrientationType::Landscape);
         }
@@ -115,38 +161,39 @@ impl Writer {
                 ),
             );
         }
-        // Styles de titre : mêmes tailles qu'à l'écran, et niveau de plan
-        // pour que Word les montre dans son volet de navigation.
-        for (id, name, size, outline, color) in [
-            ("Title", "Title", 52, 0, None),
-            ("Heading1", "heading 1", 40, 0, None),
-            ("Heading2", "heading 2", 32, 1, None),
-            ("Heading3", "heading 3", 28, 2, Some("434343")),
+        // Styles de titre : ceux de la feuille de styles, avec un niveau de
+        // plan pour que Word les montre dans son volet de navigation.
+        for (level, id, name, outline) in [
+            (1, "Title", "Title", 0),
+            (2, "Heading1", "heading 1", 0),
+            (3, "Heading2", "heading 2", 1),
+            (4, "Heading3", "heading 3", 2),
         ] {
-            let mut style = Style::new(id, StyleType::Paragraph)
-                .name(name)
-                .based_on("Normal")
-                .next("Normal")
-                .q_format(true)
-                .size(size)
-                .outline_lvl(outline)
-                .line_spacing(
-                    LineSpacing::new()
-                        .line_rule(LineSpacingType::Auto)
-                        .before(240)
-                        .after(80)
-                        .line(300),
-                );
-            if let Some(c) = color {
-                style = style.color(c);
-            }
+            let style = word_style(id, name, sheet.heading(level)).outline_lvl(outline);
             docx = docx.add_style(style);
+        }
+        // Titres d'onglet : comme le « Titre », en plus gras.
+        for level in 1..=tm_model::MAX_TAB_LEVEL {
+            let base = sheet.heading(level);
+            let style = ParagraphStyle {
+                bold: true,
+                space_before: 0.0,
+                ..base.clone()
+            };
+            let name = match level {
+                1 => "TM Onglet".to_string(),
+                n => format!("TM Sous-onglet {}", n - 1),
+            };
+            let id = format!("{TAB_STYLE_PREFIX}{level}");
+            docx = docx.add_style(word_style(&id, &name, &style).outline_lvl(level as usize - 1));
         }
         Self {
             docx,
             // Le numéro 1 est déjà pris par la numérotation par défaut de docx-rs.
             next_numbering: 2,
             content_width_px: (w_mm - m.left - m.right) * 96.0 / 25.4,
+            normal: sheet.normal.clone(),
+            first: true,
         }
     }
 
@@ -163,7 +210,23 @@ impl Writer {
                     3 => "Heading2",
                     _ => "Heading3",
                 };
-                let p = self.paragraph(&attrs.style, content, ctx).style(style);
+                let inner = Ctx {
+                    heading: true,
+                    ..ctx.clone()
+                };
+                let p = self.paragraph(&attrs.style, content, &inner).style(style);
+                self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+            }
+            Block::TabTitle { attrs } => {
+                // Chaque onglet commence sur une nouvelle page.
+                let style = format!(
+                    "{TAB_STYLE_PREFIX}{}",
+                    attrs.level.clamp(1, tm_model::MAX_TAB_LEVEL)
+                );
+                let p = Paragraph::new()
+                    .style(&style)
+                    .page_break_before(!self.first)
+                    .add_run(Run::new().add_text(&attrs.title));
                 self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
             }
             Block::Blockquote { content } => {
@@ -176,7 +239,9 @@ impl Writer {
                 }
             }
             Block::BulletList { content } => self.list(content, ctx, false, 1),
-            Block::OrderedList { attrs, content } => self.list(content, ctx, true, attrs.start as usize),
+            Block::OrderedList { attrs, content } => {
+                self.list(content, ctx, true, attrs.start as usize)
+            }
             Block::TaskList { content } => {
                 for item in content {
                     if let Block::TaskItem { attrs, content } = item {
@@ -247,7 +312,12 @@ impl Writer {
                     LevelText::new(text),
                     LevelJc::new("left"),
                 )
-                .indent(Some(indent), Some(SpecialIndentType::Hanging(360)), None, None),
+                .indent(
+                    Some(indent),
+                    Some(SpecialIndentType::Hanging(360)),
+                    None,
+                    None,
+                ),
             );
         }
         self.docx = std::mem::take(&mut self.docx)
@@ -309,7 +379,11 @@ impl Writer {
         if indent > 0 && ctx.list.is_none() || ctx.task.is_some() && indent > 0 {
             p = p.indent(Some(indent), None, None, None);
         }
-        if let Some(lh) = style.line_height.as_deref().and_then(|v| v.parse::<f64>().ok()) {
+        if let Some(lh) = style
+            .line_height
+            .as_deref()
+            .and_then(|v| v.parse::<f64>().ok())
+        {
             p = p.line_spacing(
                 LineSpacing::new()
                     .line_rule(LineSpacingType::Auto)
@@ -365,6 +439,17 @@ impl Writer {
         if ctx.bold {
             run = run.bold();
         }
+        if !ctx.heading && !ctx.code {
+            if self.normal.bold {
+                run = run.bold();
+            }
+            if self.normal.italic {
+                run = run.italic();
+            }
+            if let Some(c) = hex(self.normal.color.as_deref()) {
+                run = run.color(c);
+            }
+        }
         if ctx.quote_level > 0 {
             run = run.color(QUOTE_TEXT);
         }
@@ -385,7 +470,8 @@ impl Writer {
                     run
                 }
                 Mark::Highlight { attrs } => run.shading(
-                    Shading::new().fill(hex(attrs.color.as_deref()).unwrap_or_else(|| "FFF3A3".into())),
+                    Shading::new()
+                        .fill(hex(attrs.color.as_deref()).unwrap_or_else(|| "FFF3A3".into())),
                 ),
                 Mark::TextStyle { attrs } => {
                     if let Some(font) = attrs.font_family.as_deref() {
@@ -422,10 +508,7 @@ impl Writer {
             .iter()
             .filter_map(|row| match row {
                 Block::TableRow { content } => Some(TableRow::new(
-                    content
-                        .iter()
-                        .map(|cell| self.cell(cell))
-                        .collect(),
+                    content.iter().map(|cell| self.cell(cell)).collect(),
                 )),
                 _ => None,
             })
@@ -446,20 +529,26 @@ impl Writer {
         let mut any = false;
         for b in content {
             let p = match b {
-                Block::Paragraph { attrs, content } | Block::Heading { attrs: tm_model::HeadingAttrs { style: attrs, .. }, content } => {
+                Block::Paragraph { attrs, content }
+                | Block::Heading {
+                    attrs: tm_model::HeadingAttrs { style: attrs, .. },
+                    content,
+                } => {
                     let ctx = Ctx {
                         bold: header,
                         ..Ctx::default()
                     };
                     self.paragraph(attrs, content, &ctx)
                 }
-                Block::Image { attrs } => match self.image_run(&attrs.src, attrs.width, attrs.height) {
-                    Some(run) => Paragraph::new().add_run(run),
-                    None => continue,
-                },
-                other => Paragraph::new().add_run(Run::new().add_text(
-                    Document::new(vec![other.clone()]).plain_text().trim_end(),
-                )),
+                Block::Image { attrs } => {
+                    match self.image_run(&attrs.src, attrs.width, attrs.height) {
+                        Some(run) => Paragraph::new().add_run(run),
+                        None => continue,
+                    }
+                }
+                other => Paragraph::new().add_run(
+                    Run::new().add_text(Document::new(vec![other.clone()]).plain_text().trim_end()),
+                ),
             };
             tc = tc.add_paragraph(p);
             any = true;
@@ -474,7 +563,9 @@ impl Writer {
     /// de téléchargement, l'application fonctionne hors ligne.
     fn image_run(&self, src: &str, width: Option<f64>, height: Option<f64>) -> Option<Run> {
         let data = src.strip_prefix("data:")?.split_once(";base64,")?.1;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).ok()?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data.trim())
+            .ok()?;
         let img = image::load_from_memory(&bytes).ok()?;
         let (w, h) = (img.width() as f64, img.height() as f64);
         let mut png = std::io::Cursor::new(Vec::new());
@@ -494,7 +585,11 @@ impl Writer {
 }
 
 fn fonts(name: &str) -> RunFonts {
-    RunFonts::new().ascii(name).hi_ansi(name).cs(name).east_asia(name)
+    RunFonts::new()
+        .ascii(name)
+        .hi_ansi(name)
+        .cs(name)
+        .east_asia(name)
 }
 
 /// `#c0392b` → `C0392B` ; les couleurs CSS nommées ou `rgb()` sont ignorées.
@@ -505,7 +600,9 @@ fn hex(color: Option<&str>) -> Option<String> {
         6 => c.to_string(),
         _ => return None,
     };
-    c.chars().all(|ch| ch.is_ascii_hexdigit()).then(|| c.to_uppercase())
+    c.chars()
+        .all(|ch| ch.is_ascii_hexdigit())
+        .then(|| c.to_uppercase())
 }
 
 /// `"14pt"` → 14 ; `"16px"` → 12.
@@ -544,11 +641,12 @@ mod tests {
         let json = include_str!("../../tm-model/tests/fixtures/tiptap-formatting.json");
         let mut doc = Document::from_json(json).unwrap();
         let tables = include_str!("../../tm-model/tests/fixtures/tiptap-table-image.json");
-        doc.content.extend(Document::from_json(tables).unwrap().content);
+        doc.content
+            .extend(Document::from_json(tables).unwrap().content);
         doc.content.push(Block::PageBreak);
         doc.content.push(Block::heading(2, "Chapitre"));
 
-        let bytes = export(&doc, &PageSetup::default()).unwrap();
+        let bytes = export(&doc, &PageSetup::default(), &StyleSheet::default()).unwrap();
         let xml = document_xml(&bytes);
         assert!(xml.contains("Bonjour le monde"));
         assert!(xml.contains(r#"<w:rFonts w:ascii="Arial""#));
@@ -576,7 +674,7 @@ mod tests {
                 height: None,
             },
         }]);
-        let bytes = export(&doc, &PageSetup::default()).unwrap();
+        let bytes = export(&doc, &PageSetup::default(), &StyleSheet::default()).unwrap();
         let zip = zip_reader(&bytes);
         assert!(zip.file_names().any(|n| n.starts_with("word/media/")));
     }
@@ -622,11 +720,15 @@ mod import_tests {
                         Block::paragraph("puce"),
                         Block::OrderedList {
                             attrs: Default::default(),
-                            content: vec![Block::ListItem { content: vec![Block::paragraph("sous")] }],
+                            content: vec![Block::ListItem {
+                                content: vec![Block::paragraph("sous")],
+                            }],
                         },
                     ],
                 },
-                Block::ListItem { content: vec![Block::paragraph("puce 2")] },
+                Block::ListItem {
+                    content: vec![Block::paragraph("puce 2")],
+                },
             ],
         });
         doc.content.push(Block::HorizontalRule);
@@ -641,8 +743,8 @@ mod import_tests {
         page.landscape = true;
         page.margins.left = 30.0;
         page.page_numbers = false;
-        let bytes = export(&doc, &page).unwrap();
-        let (back, back_page) = import(&bytes).unwrap();
+        let bytes = export(&doc, &page, &StyleSheet::default()).unwrap();
+        let (back, back_page, _) = import(&bytes).unwrap();
 
         assert_eq!(back_page, page);
         assert_eq!(back.plain_text(), doc.plain_text());
@@ -669,7 +771,11 @@ mod import_tests {
             assert!(json.contains(needle), "manque {needle} dans {json}");
         }
         // L'en-tête de tableau n'a pas de gras ajouté, et la sous-liste est dans la puce.
-        match back.content.iter().find(|b| matches!(b, Block::BulletList { .. })) {
+        match back
+            .content
+            .iter()
+            .find(|b| matches!(b, Block::BulletList { .. }))
+        {
             Some(Block::BulletList { content }) => {
                 assert_eq!(content.len(), 2);
                 assert!(matches!(&content[0], Block::ListItem { content } if content.len() == 2));
@@ -687,17 +793,42 @@ mod import_tests {
             },
             Block::paragraph("Après"),
         ]);
-        let bytes = export(&doc, &PageSetup::default()).unwrap();
+        let bytes = export(&doc, &PageSetup::default(), &StyleSheet::default()).unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes[..])).unwrap();
         let mut xml = String::new();
-        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml).unwrap();
+        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+            .unwrap();
         assert!(xml.contains("<w:pBdr><w:left"), "{xml}");
-        let (back, _) = import(&bytes).unwrap();
+        let (back, _, _) = import(&bytes).unwrap();
         assert_eq!(back, doc);
     }
 
     #[test]
     fn refuse_un_fichier_qui_n_est_pas_word() {
         assert!(import(b"pas un docx").is_err());
+    }
+
+    #[test]
+    fn onglets_et_styles_aller_retour() {
+        use tm_model::{flatten_tabs, split_tabs, Tab};
+        let mut first = Tab::new("Chapitre 1", Document::new(vec![Block::paragraph("Début")]));
+        first.children.push(Tab::new(
+            "Scène",
+            Document::new(vec![Block::heading(2, "Titre 1")]),
+        ));
+        let tabs = vec![
+            first,
+            Tab::new("Annexe", Document::new(vec![Block::paragraph("Fin")])),
+        ];
+        let mut styles = StyleSheet::default();
+        styles.heading1.bold = true;
+        styles.heading1.color = Some("#1a73e8".into());
+        styles.heading1.font_family = Some("Arial".into());
+        styles.normal.font_size = 11.0;
+        styles.normal.space_after = 8.0;
+        let bytes = export(&flatten_tabs(&tabs), &PageSetup::default(), &styles).unwrap();
+        let (doc, _, back_styles) = import(&bytes).unwrap();
+        assert_eq!(split_tabs(doc), tabs);
+        assert_eq!(back_styles, styles);
     }
 }

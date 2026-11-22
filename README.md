@@ -16,6 +16,21 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > le dernier document au lancement. Les documents s'ouvrent et
 > s'enregistrent directement en **Word (.docx)** ou en **Markdown (.md)**.
 > Export PDF direct (identique à l'écran), impression à part.
+>
+> **Nouveau :** interface inspirée de Google Docs (menus Fichier, Édition,
+> Affichage, Insertion, Format, Outils ; barre d'outils ; panneau de
+> gauche). **Onglets et sous-onglets** (trois niveaux), chacun avec son
+> contenu et son plan. **Styles de paragraphe modifiables** (Texte normal,
+> Titre, Titre 1 à 3 : police, taille, gras, couleur, interligne,
+> espacements), « mettre à jour selon la sélection » et styles par défaut.
+> Affichage **en pages ou sans pagination**, zoom, **nombre de mots et de
+> signes** (avec ou sans espaces, pour la sélection, l'onglet ou tout le
+> document), majuscules/minuscules, date du jour.
+>
+> Les onglets sont gardés dans les fichiers Word (chaque onglet commence
+> par un titre de style « TM Onglet ») et Markdown (un commentaire invisible
+> avant le titre de l'onglet) : ils sont retrouvés à la réouverture. Les
+> styles sont écrits dans les styles Word ; le Markdown ne les garde pas.
 
 ## Comment c'est construit
 
