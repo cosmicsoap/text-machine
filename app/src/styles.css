@@ -1950,3 +1950,36 @@ body.suggesting[data-revision="5"] .toolbar select.edit-mode {
   flex-wrap: wrap;
   row-gap: 2px;
 }
+
+/* Mode « corrections sur l'original » : le texte en cours est montré propre
+   (sans le texte barré des suggestions ni leurs couleurs) ; toutes les
+   corrections sont sur la version d'origine, à gauche. */
+body.clean-current #editor del.suggest-del {
+  display: none;
+}
+
+body.clean-current #editor ins.suggest-ins {
+  color: inherit;
+  text-decoration: none;
+  background: none;
+}
+
+.diff-widget {
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  white-space: pre-wrap;
+}
+
+.diff-widget[data-level="2"] { --rev: #1a56c4; }
+.diff-widget[data-level="3"] { --rev: #8430ce; }
+.diff-widget[data-level="4"] { --rev: #c26401; }
+.diff-widget[data-level="5"] { --rev: #c2185b; }
+
+.diff-widget[data-level] {
+  color: var(--rev);
+  background: color-mix(in srgb, var(--rev) 12%, transparent);
+}
+
+body.clean-current .legend {
+  display: none;
+}

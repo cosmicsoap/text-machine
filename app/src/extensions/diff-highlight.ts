@@ -34,17 +34,40 @@ export const DiffHighlight = Extension.create({
   },
 });
 
+/** Texte ajouté, montré dans la version d'origine (il n'y est pas). */
+export interface DiffWidget {
+  pos: number;
+  text: string;
+  level: number;
+}
+
 /** Remplace les surlignages : `kind` donne la couleur (ajout ou retrait). */
-export function setDiffHighlights(view: EditorView, ranges: DiffRange[], kind: "ins" | "del") {
+export function setDiffHighlights(view: EditorView, ranges: DiffRange[], kind: "ins" | "del", widgets: DiffWidget[] = []) {
   const doc = view.state.doc;
   const max = doc.content.size;
+  const shown = widgets
+    .filter((w) => w.pos >= 0 && w.pos <= max)
+    .map((w, i) =>
+      Decoration.widget(
+        w.pos,
+        () => {
+          const span = document.createElement("span");
+          span.className = "diff-ins diff-widget";
+          if (w.level > 1) span.dataset.level = String(w.level);
+          span.textContent = w.text;
+          return span;
+        },
+        { side: -1, key: `w${i}-${w.pos}-${w.level}-${w.text}`, marks: [] },
+      ),
+    );
   const decorations = ranges
     .filter((r) => r.to > r.from && r.from >= 0 && r.to <= max)
     .map((r) =>
       r.block
         ? Decoration.node(r.from, r.to, { class: `diff-${kind} diff-block` })
         : Decoration.inline(r.from, r.to, { class: `diff-${kind}` }),
-    );
+    )
+    .concat(shown);
   view.dispatch(
     view.state.tr.setMeta(key, DecorationSet.create(doc, decorations)).setMeta("addToHistory", false),
   );

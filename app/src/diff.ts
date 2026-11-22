@@ -15,16 +15,25 @@ export function tokenize(doc: PMNode): Token[] {
   const out: Token[] = [];
   doc.descendants((node, pos) => {
     if (node.isTextblock) {
-      // Une position par caractère, et une pour chaque élément en ligne.
+      // Le texte barré d'une suggestion est ignoré : on compare le texte tel
+      // qu'il sera une fois les suggestions acceptées.
       let text = "";
-      node.forEach((child) => {
-        if (child.isText) text += child.text;
-        else if (child.type.name === "hardBreak") text += " ";
-        else text += child.type.name === "footnote" ? `￼` : "�";
+      const at: number[] = [];
+      node.forEach((child, offset) => {
+        const start = pos + 1 + offset;
+        if (child.isText) {
+          if (child.marks.some((m) => m.type.name === "deletion")) return;
+          for (let i = 0; i < child.text!.length; i++) at.push(start + i);
+          text += child.text;
+        } else {
+          text += child.type.name === "hardBreak" ? "\u2028" : child.type.name === "footnote" ? "\uFFFC" : "\uFFFD";
+          at.push(start);
+        }
       });
       for (const m of text.matchAll(WORD)) {
-        const start = pos + 1 + m.index!;
-        out.push({ text: m[0], from: start, to: start + m[0].length });
+        const first = m.index!;
+        const last = first + m[0].length - 1;
+        out.push({ text: m[0], from: at[first], to: at[last] + 1 });
       }
       // Fin de paragraphe : sépare les mots de deux paragraphes.
       out.push({ text: `¶${node.type.name}`, from: pos + node.nodeSize - 1, to: pos + node.nodeSize - 1 });
@@ -54,6 +63,8 @@ function diffIndices(a: string[], b: string[], maxEdits = 1500) {
   const added: number[] = [];
   /** Pour chaque différence : l'indice du jeton de `b` où elle se trouve. */
   const anchors: number[] = [];
+  /** Pour chaque jeton ajouté : l'indice du jeton de `a` devant lequel il vient. */
+  const addedAt: number[] = [];
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   let endA = a.length;
@@ -66,9 +77,12 @@ function diffIndices(a: string[], b: string[], maxEdits = 1500) {
   const m = endB - start;
   const markAll = () => {
     for (let i = start; i < endA; i++) removed.push(i);
-    for (let j = start; j < endB; j++) added.push(j);
+    for (let j = start; j < endB; j++) {
+      added.push(j);
+      addedAt.push(endA);
+    }
     anchors.push(start);
-    return { removed, added, anchors };
+    return { removed, added, anchors, addedAt };
   };
   if (n === 0 || m === 0) return markAll();
 
@@ -113,13 +127,15 @@ function diffIndices(a: string[], b: string[], maxEdits = 1500) {
       x--;
       y--;
     }
-    if (x === prevX) added.push(start + prevY);
-    else removed.push(start + prevX);
+    if (x === prevX) {
+      added.push(start + prevY);
+      addedAt.push(start + prevX);
+    } else removed.push(start + prevX);
     anchors.push(start + prevY);
     x = prevX;
     y = prevY;
   }
-  return { removed, added, anchors };
+  return { removed, added, anchors, addedAt };
 }
 
 /** Réunit les jetons voisins en plages. */
@@ -139,7 +155,7 @@ function ranges(tokens: Token[], indices: number[]): DiffRange[] {
 export function compareDocs(before: PMNode, after: PMNode) {
   const a = tokenize(before);
   const b = tokenize(after);
-  const { removed, added, anchors } = diffIndices(
+  const { removed, added, anchors, addedAt } = diffIndices(
     a.map((t) => t.text),
     b.map((t) => t.text),
   );
@@ -157,7 +173,45 @@ export function compareDocs(before: PMNode, after: PMNode) {
     added: ranges(b, added),
     changes: places.length,
     places,
+    insertions: insertionsInBefore(a, b, before, after, added, addedAt),
   };
+}
+
+/** Texte ajouté, à montrer dans la version d'origine (mode « corrections sur l'original »). */
+export interface InsertionWidget {
+  /** Position dans le document d'origine. */
+  pos: number;
+  text: string;
+  /** Niveau de révision de la suggestion (0 : simple différence). */
+  level: number;
+}
+
+function insertionsInBefore(
+  a: Token[],
+  b: Token[],
+  before: PMNode,
+  after: PMNode,
+  added: number[],
+  addedAt: number[],
+): InsertionWidget[] {
+  // Ajouts dans l'ordre du texte, regroupés par endroit d'arrivée.
+  const pairs = added.map((j, k) => [j, addedAt[k]] as const).sort((p, q) => p[0] - q[0]);
+  const out: InsertionWidget[] = [];
+  const end = Math.max(0, before.content.size - 1);
+  let lastJ = -2;
+  for (const [j, at] of pairs) {
+    const t = b[j];
+    const pos = at < a.length ? a[at].from : end;
+    const text = t.text.startsWith("¶") ? "¶ " : t.text.startsWith("■") ? `[${t.text.slice(1).split(":")[0] === "image" ? "image" : "…"}]` : t.text;
+    const node = t.to > t.from ? after.nodeAt(t.from) : null;
+    const mark = node?.marks.find((m) => m.type.name === "insertion");
+    const level = mark ? Number(mark.attrs.level) || 1 : 0;
+    const last = out[out.length - 1];
+    if (last && lastJ === j - 1 && last.pos === pos && last.level === level) last.text += text;
+    else out.push({ pos, text, level });
+    lastJ = j;
+  }
+  return out;
 }
 
 export interface Stats {
