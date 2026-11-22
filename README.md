@@ -120,9 +120,7 @@ xattr -dr com.apple.quarantine "/Applications/Text Machine.app"
    apparaît ensuite dans le menu Démarrer.
 
 Sur Windows, les raccourcis utilisent **Ctrl** à la place de **⌘**
-(Ctrl+S pour enregistrer, Ctrl+B pour le gras…). L'export PDF passe par la
-fenêtre d'impression : choisissez « Enregistrer au format PDF » ou
-« Microsoft Print to PDF ».
+(Ctrl+S pour enregistrer, Ctrl+B pour le gras…).
 
 ## Lancer l'application sur Mac (pour développer)
 

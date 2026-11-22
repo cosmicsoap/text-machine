@@ -6,6 +6,10 @@
 //! pages de papier, une par feuille. L'impression, elle, découpait d'après
 //! la zone imprimable de l'imprimante : une partie de chaque page passait
 //! sur la suivante.
+//!
+//! Sur Windows, WebView2 sait écrire un PDF lui-même (`PrintToPdf`) : on lui
+//! donne la taille exacte d'une feuille et des marges nulles, et la mise en
+//! page d'impression (styles.css, `@media print`) fait une feuille par page.
 
 use tm_model::PageSetup;
 
@@ -129,12 +133,70 @@ fn split_pages(
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+pub async fn export(
+    window: &tauri::WebviewWindow,
+    path: &str,
+    page: &PageSetup,
+    _pages: u32,
+) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Environment6, ICoreWebView2_7};
+    use webview2_com::PrintToPdfCompletedHandler;
+    use windows_core::{Interface, HSTRING};
+
+    const MM_PER_INCH: f64 = 25.4;
+    let (w_mm, h_mm) = page.dimensions_mm();
+    let path = path.to_string();
+    let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+
+    window
+        .with_webview(move |webview| {
+            let start = || -> windows_core::Result<()> {
+                unsafe {
+                    let core: ICoreWebView2_7 = webview.controller().CoreWebView2()?.cast()?;
+                    let env: ICoreWebView2Environment6 = webview.environment().cast()?;
+                    let settings = env.CreatePrintSettings()?;
+                    settings.SetPageWidth(w_mm / MM_PER_INCH)?;
+                    settings.SetPageHeight(h_mm / MM_PER_INCH)?;
+                    settings.SetMarginTop(0.0)?;
+                    settings.SetMarginBottom(0.0)?;
+                    settings.SetMarginLeft(0.0)?;
+                    settings.SetMarginRight(0.0)?;
+                    settings.SetScaleFactor(1.0)?;
+                    settings.SetShouldPrintBackgrounds(true)?;
+                    settings.SetShouldPrintHeaderAndFooter(false)?;
+                    let done_tx = tx.clone();
+                    let handler = PrintToPdfCompletedHandler::create(Box::new(move |result, ok| {
+                        let _ = done_tx.send(match result {
+                            Ok(()) if ok => Ok(()),
+                            Ok(()) => Err("WebView2 n'a pas pu écrire le PDF (fichier ouvert ailleurs ?)".into()),
+                            Err(e) => Err(e.message()),
+                        });
+                        Ok(())
+                    }));
+                    core.PrintToPdf(&HSTRING::from(path.as_str()), &settings, &handler)
+                }
+            };
+            if let Err(e) = start() {
+                let _ = tx.send(Err(format!("export PDF impossible : {}", e.message())));
+            }
+        })
+        .map_err(|e| e.to_string())?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_else(|_| Err("l'export PDF n'a pas abouti".into()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub async fn export(
     _window: &tauri::WebviewWindow,
     _path: &str,
     _page: &PageSetup,
     _pages: u32,
 ) -> Result<(), String> {
-    Err("L'export PDF direct n'existe que sur Mac pour l'instant.".into())
+    Err("L'export PDF direct n'existe que sur Mac et Windows pour l'instant.".into())
 }
