@@ -248,6 +248,42 @@ pub struct ChangeAttrs {
     /// Date ISO 8601, par exemple `"2026-11-22T18:30:00Z"`.
     #[serde(default)]
     pub date: String,
+    /// Niveau de révision (1 à 5, comme Scrivener) : chaque niveau a sa
+    /// couleur. Absent : niveau 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u8>,
+}
+
+impl ChangeAttrs {
+    /// Auteur tel qu'écrit dans Word : « Moi · révision 2 » à partir du
+    /// niveau 2 (Word ne connaît pas les niveaux de révision).
+    pub fn word_author(&self) -> String {
+        let author = if self.author.is_empty() {
+            "Text Machine"
+        } else {
+            &self.author
+        };
+        match self.level {
+            Some(n) if n > 1 => format!("{author} · révision {n}"),
+            _ => author.to_string(),
+        }
+    }
+
+    /// L'inverse de [`ChangeAttrs::word_author`].
+    pub fn from_word_author(word: &str, date: &str) -> Self {
+        let (author, level) = match word.rsplit_once(" · révision ") {
+            Some((a, n)) => match n.trim().parse::<u8>() {
+                Ok(n) if (1..=5).contains(&n) => (a, Some(n)),
+                _ => (word, None),
+            },
+            None => (word, None),
+        };
+        Self {
+            author: author.to_string(),
+            date: date.to_string(),
+            level,
+        }
+    }
 }
 
 /// Mise en forme des caractères.

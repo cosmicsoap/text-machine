@@ -215,6 +215,37 @@ export class TabTree {
     this.onChange();
   }
 
+  /**
+   * Peut-on poser l'onglet `id` avant, après ou dans `targetId` (glisser-
+   * déposer) ? Pas dans lui-même ni ses sous-onglets, et pas au-delà de trois
+   * niveaux.
+   */
+  canMoveTo(id: string, targetId: string, where: "before" | "after" | "inside") {
+    const moving = this.find(id);
+    const target = this.find(targetId);
+    if (!moving || !target || id === targetId) return false;
+    if (this.flatOf(moving.node).includes(targetId)) return false;
+    const depth = where === "inside" ? target.depth + 1 : target.depth;
+    return depth + this.height(moving.node) <= MAX_TAB_LEVEL - 1;
+  }
+
+  /** Déplace un onglet (avec ses sous-onglets) avant, après ou dans un autre. */
+  moveTo(id: string, targetId: string, where: "before" | "after" | "inside") {
+    if (!this.canMoveTo(id, targetId, where)) return false;
+    const from = this.siblings(id)!;
+    const [node] = from.list.splice(from.index, 1);
+    if (where === "inside") {
+      const target = this.find(targetId)!.node;
+      target.children.push(node);
+      target.expanded = true;
+    } else {
+      const to = this.siblings(targetId)!;
+      to.list.splice(where === "before" ? to.index : to.index + 1, 0, node);
+    }
+    this.onChange();
+    return true;
+  }
+
   canIndent(id: string) {
     const place = this.siblings(id);
     const found = this.find(id);

@@ -581,20 +581,16 @@ impl Writer {
                         _ => None,
                     });
                     if let Some((inserted, change)) = change {
-                        let author = if change.author.is_empty() {
-                            "Text Machine"
-                        } else {
-                            &change.author
-                        };
+                        let author = change.word_author();
                         let date = if change.date.is_empty() {
                             "2026-01-01T00:00:00Z"
                         } else {
                             &change.date
                         };
                         p = if inserted {
-                            p.add_insert(Insert::new(run).author(author).date(date))
+                            p.add_insert(Insert::new(run).author(&author).date(date))
                         } else {
-                            p.add_delete(Delete::new().author(author).date(date).add_run(run))
+                            p.add_delete(Delete::new().author(&author).date(date).add_run(run))
                         };
                         continue;
                     }
@@ -1196,6 +1192,7 @@ mod import_tests {
         let change = |a: &str| tm_model::ChangeAttrs {
             author: a.into(),
             date: "2026-11-22T10:00:00Z".into(),
+            level: (a == "Bob").then_some(3),
         };
         Document::new(vec![
             Block::TableOfContents,
@@ -1266,6 +1263,6 @@ mod import_tests {
         assert!(content.iter().any(|i| matches!(i, Inline::Text { text, marks }
             if text == "un ajout" && matches!(&marks[..], [Mark::Insertion { attrs }] if attrs.author == "Alice"))), "{content:?}");
         assert!(content.iter().any(|i| matches!(i, Inline::Text { text, marks }
-            if text == "un retrait" && matches!(&marks[..], [Mark::Deletion { attrs }] if attrs.author == "Bob"))), "{content:?}");
+            if text == "un retrait" && matches!(&marks[..], [Mark::Deletion { attrs }] if attrs.author == "Bob" && attrs.level == Some(3)))), "{content:?}");
     }
 }

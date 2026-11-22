@@ -6,7 +6,7 @@
 import { Editor, createDocument, type AnyExtension, type JSONContent } from "@tiptap/core";
 import { DecorationSet } from "@tiptap/pm/view";
 import type { EditorState } from "@tiptap/pm/state";
-import { compareDocs } from "./diff";
+import { compareDocs, docStats, type Stats } from "./diff";
 import { setDiffHighlights } from "./extensions/diff-highlight";
 import type { TabData, TabTree } from "./tabs";
 
@@ -52,7 +52,7 @@ export class CompareView {
       extensions: () => AnyExtension[];
       /** Après l'ouverture ou la fermeture (pour la barre de titre, les menus…). */
       onChange: () => void;
-      showCount: (changes: number, missing: boolean) => void;
+      showCount: (changes: number, missing: boolean, before: Stats, after: Stats) => void;
     },
   ) {
     const scroller = deps.pane.querySelector<HTMLElement>(".compare-desk")!;
@@ -141,9 +141,31 @@ export class CompareView {
   refresh() {
     if (!this.source || !this.viewer) return;
     window.clearTimeout(this.timer);
-    const { removed, added, changes } = compareDocs(this.viewer.state.doc, this.deps.editor.state.doc);
+    const { removed, added, changes, places } = compareDocs(this.viewer.state.doc, this.deps.editor.state.doc);
+    this.places = places;
     setDiffHighlights(this.viewer.view, removed, "del");
     setDiffHighlights(this.deps.editor.view, added, "ins");
-    this.deps.showCount(changes, this.missing);
+    this.deps.showCount(changes, this.missing, docStats(this.viewer.state.doc), docStats(this.deps.editor.state.doc));
+  }
+
+  /** Endroits des différences dans le texte en cours. */
+  private places: number[] = [];
+
+  /** Va à la différence suivante (1) ou précédente (-1). */
+  go(direction: 1 | -1) {
+    if (!this.source) return;
+    this.refresh();
+    const editor = this.deps.editor;
+    const here = editor.state.selection.from;
+    const list = this.places;
+    if (!list.length) return;
+    const target =
+      direction > 0
+        ? (list.find((p) => p > here + 1) ?? list[0])
+        : ([...list].reverse().find((p) => p < here - 1) ?? list[list.length - 1]);
+    editor.chain().focus().setTextSelection(Math.min(target, editor.state.doc.content.size)).run();
+    const dom = editor.view.domAtPos(editor.state.selection.from).node;
+    const el = (dom.nodeType === 1 ? dom : dom.parentElement) as HTMLElement | null;
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 }

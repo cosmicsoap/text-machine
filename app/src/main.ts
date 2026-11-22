@@ -116,6 +116,8 @@ for (const el of document.querySelectorAll<HTMLElement>("[data-icon]")) {
 let suggesting = false;
 /** Nom affiché sur les suggestions. */
 let authorName = prefs.get("author", "Moi");
+/** Niveau de révision des nouvelles suggestions (couleurs, comme Scrivener). */
+let revisionLevel = Number(prefs.get("revisionLevel", "1")) || 1;
 let notesView: NotesView | null = null;
 let compare: CompareView | null = null;
 
@@ -135,7 +137,7 @@ const editor = new Editor({
   element: $("#editor"),
   extensions: [
     ...documentExtensions({ pageOf }),
-    Suggestions.configure({ isOn: () => suggesting, author: () => authorName }),
+    Suggestions.configure({ isOn: () => suggesting, author: () => authorName, level: () => revisionLevel }),
     Search,
     Pagination.configure({
       getSetup: () => (forcePaged ? { ...pageSetup, pageless: false } : pageSetup),
@@ -235,6 +237,15 @@ function outlineItems(): HTMLLIElement[] {
   return items;
 }
 
+/** Onglet en cours de glisser-déposer. */
+let draggedTab: string | null = null;
+
+function clearDropMarks() {
+  for (const el of tabTree.querySelectorAll(".drop-before, .drop-after, .drop-inside")) {
+    el.classList.remove("drop-before", "drop-after", "drop-inside");
+  }
+}
+
 function tabRow(node: TabNode, depth: number): HTMLLIElement {
   const li = document.createElement("li");
   li.setAttribute("role", "treeitem");
@@ -280,6 +291,49 @@ function tabRow(node: TabNode, depth: number): HTMLLIElement {
     editor.commands.focus();
   });
   row.addEventListener("dblclick", () => renameTab(node));
+
+  // Glisser-déposer : en haut de la ligne = avant, en bas = après, au
+  // milieu = comme sous-onglet (comme le classeur de Scrivener).
+  row.draggable = true;
+  row.addEventListener("dragstart", (e) => {
+    draggedTab = node.id;
+    e.dataTransfer?.setData("text/plain", node.title);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    row.classList.add("dragging");
+  });
+  row.addEventListener("dragend", () => {
+    draggedTab = null;
+    row.classList.remove("dragging");
+    clearDropMarks();
+  });
+  const zone = (e: DragEvent): "before" | "after" | "inside" | null => {
+    if (!draggedTab) return null;
+    const r = row.getBoundingClientRect();
+    const y = (e.clientY - r.top) / r.height;
+    const wanted = y < 0.3 ? "before" : y > 0.7 ? "after" : "inside";
+    if (tabs.canMoveTo(draggedTab, node.id, wanted)) return wanted;
+    // Trop profond pour « dans » : on se rabat sur avant / après.
+    const fallback = y < 0.5 ? "before" : "after";
+    return tabs.canMoveTo(draggedTab, node.id, fallback) ? fallback : null;
+  };
+  row.addEventListener("dragover", (e) => {
+    const where = zone(e);
+    if (!where) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    clearDropMarks();
+    row.classList.add(`drop-${where}`);
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after", "drop-inside"));
+  row.addEventListener("drop", (e) => {
+    const where = zone(e);
+    const id = draggedTab;
+    clearDropMarks();
+    if (!where || !id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (tabs.moveTo(id, node.id, where)) setSaveStatus("Onglet déplacé : l'ordre du document suit celui du panneau");
+  });
   row.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     popup(more, tabMenu(node, depth));
@@ -2066,6 +2120,7 @@ const modeSelect = $<HTMLSelectElement>("#edit-mode");
 function setSuggesting(on: boolean) {
   suggesting = on;
   modeSelect.value = on ? "suggest" : "edit";
+  document.body.dataset.revision = String(revisionLevel);
   document.body.classList.toggle("suggesting", on);
   setSaveStatus(on ? "Mode suggestion : vos modifications seront proposées" : "");
   editor.commands.focus();
@@ -2080,11 +2135,25 @@ async function askAuthor() {
   prefs.set("author", name);
 }
 
-function resolveAll(accept: boolean) {
+function resolveAll(accept: boolean, level?: number) {
   const n = listChanges(editor.state.doc).length;
   if (!n) return;
-  if (accept) chain().acceptAllChanges().run();
-  else chain().rejectAllChanges().run();
+  if (accept) chain().acceptAllChanges(level).run();
+  else chain().rejectAllChanges(level).run();
+}
+
+const REVISION_COLORS = ["vert", "bleu", "violet", "orange", "rose"];
+
+function setRevisionLevel(level: number) {
+  revisionLevel = level;
+  prefs.set("revisionLevel", String(level));
+  document.body.dataset.revision = String(level);
+  if (!suggesting) setSuggesting(true);
+}
+
+/** Les niveaux de révision présents dans l'onglet. */
+function levelsIn() {
+  return [...new Set(listChanges(editor.state.doc).map((c) => c.level))].sort();
 }
 
 function suggestionsMenu(): MenuItem[] {
@@ -2094,6 +2163,31 @@ function suggestionsMenu(): MenuItem[] {
     SEP,
     { label: `Accepter toutes les suggestions${changes ? ` (${changes})` : ""}`, disabled: !changes, action: () => resolveAll(true) },
     { label: "Refuser toutes les suggestions", disabled: !changes, action: () => resolveAll(false) },
+    SEP,
+    {
+      label: "Niveau de révision",
+      submenu: REVISION_COLORS.map((color, i) => ({
+        label: `Révision ${i + 1} (${color})`,
+        checked: revisionLevel === i + 1,
+        action: () => setRevisionLevel(i + 1),
+      })),
+    },
+    {
+      label: "Accepter un niveau de révision",
+      disabled: !changes,
+      submenu: levelsIn().map((n) => ({
+        label: `Révision ${n} (${REVISION_COLORS[n - 1]})`,
+        action: () => resolveAll(true, n),
+      })),
+    },
+    {
+      label: "Refuser un niveau de révision",
+      disabled: !changes,
+      submenu: levelsIn().map((n) => ({
+        label: `Révision ${n} (${REVISION_COLORS[n - 1]})`,
+        action: () => resolveAll(false, n),
+      })),
+    },
     SEP,
     { label: `Votre nom : ${authorName}…`, action: askAuthor },
   ];
@@ -2113,7 +2207,8 @@ function refreshChangeBubble() {
   }
   const kind = change.kind === "insertion" ? "Ajout" : "Suppression";
   const date = change.date ? DATE_FORMAT.format(new Date(change.date)) : "";
-  bubble.querySelector(".change-what")!.textContent = `${kind}${change.author ? ` · ${change.author}` : ""}`;
+  const level = change.level > 1 ? ` · révision ${change.level}` : "";
+  bubble.querySelector(".change-what")!.textContent = `${kind}${change.author ? ` · ${change.author}` : ""}${level}`;
   bubble.querySelector(".change-date")!.textContent = date;
   bubble.dataset.from = String(change.from);
   bubble.dataset.to = String(change.to);
@@ -2166,12 +2261,23 @@ compare = new CompareView({
     renderCompareSelect();
     setZoom(zoom);
   },
-  showCount: (changes, missing) => {
+  showCount: (changes, missing, before, after) => {
     $("#compare-count").textContent = missing
       ? "Cet onglet n'existe pas dans cette version"
       : changes === 0
         ? "Aucune différence"
         : `${changes.toLocaleString("fr-FR")} ${changes > 1 ? "différences" : "différence"}`;
+    const line = (s: { words: number; characters: number }) =>
+      `${plural(s.words, "mot")} · ${plural(s.characters, "signe")}`;
+    const delta = (n: number, word: string) =>
+      n === 0 ? "" : `${n > 0 ? "+" : "−"}${Math.abs(n).toLocaleString("fr-FR")} ${word}${Math.abs(n) > 1 ? "s" : ""}`;
+    $("#stats-before").textContent = line(before);
+    const changed = [delta(after.words - before.words, "mot"), delta(after.characters - before.characters, "signe")]
+      .filter(Boolean)
+      .join(", ");
+    $("#stats-after").textContent = `${line(after)}${changed ? ` (${changed})` : ""}`;
+    $("#stats-after").title = $("#stats-before").title =
+      "Pour l'onglet affiché. Signes : espaces compris ; le texte barré d'une suggestion ne compte pas.";
   },
 });
 
@@ -2290,6 +2396,8 @@ compareSelect.addEventListener("change", () => {
   if (version) compareWithVersion(version);
 });
 $("#compare-close").addEventListener("click", () => compare?.close());
+$("#diff-prev").addEventListener("click", () => compare?.go(-1));
+$("#diff-next").addEventListener("click", () => compare?.go(1));
 $("#compare-restore").addEventListener("click", restoreVersion);
 
 function versionsMenu(): MenuItem[] {

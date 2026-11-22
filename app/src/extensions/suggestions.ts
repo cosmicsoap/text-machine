@@ -22,8 +22,8 @@ declare module "@tiptap/core" {
     suggestions: {
       acceptChange: (from: number, to: number) => ReturnType;
       rejectChange: (from: number, to: number) => ReturnType;
-      acceptAllChanges: () => ReturnType;
-      rejectAllChanges: () => ReturnType;
+      acceptAllChanges: (level?: number) => ReturnType;
+      rejectAllChanges: (level?: number) => ReturnType;
     };
   }
 }
@@ -38,6 +38,12 @@ const changeAttributes = () => ({
     default: "",
     parseHTML: (el: HTMLElement) => el.getAttribute("data-date") ?? "",
     renderHTML: (attrs: Record<string, string>) => ({ "data-date": attrs.date }),
+  },
+  // Niveau de révision (1 à 5, comme Scrivener) : une couleur par niveau.
+  level: {
+    default: null,
+    parseHTML: (el: HTMLElement) => Number(el.getAttribute("data-level")) || null,
+    renderHTML: (attrs: Record<string, unknown>) => (attrs.level ? { "data-level": String(attrs.level) } : {}),
   },
 });
 
@@ -66,6 +72,7 @@ export interface Change {
   to: number;
   author: string;
   date: string;
+  level: number;
 }
 
 const changeMark = (marks: readonly PMMark[]) =>
@@ -80,10 +87,11 @@ export function listChanges(doc: PMNode): Change[] {
     if (!mark) return false;
     const last = out[out.length - 1];
     const kind = mark.type.name as Change["kind"];
-    if (last && last.to === pos && last.kind === kind && last.author === mark.attrs.author) {
+    const level = Number(mark.attrs.level) || 1;
+    if (last && last.to === pos && last.kind === kind && last.author === mark.attrs.author && last.level === level) {
       last.to = pos + node.nodeSize;
     } else {
-      out.push({ kind, from: pos, to: pos + node.nodeSize, author: mark.attrs.author, date: mark.attrs.date });
+      out.push({ kind, from: pos, to: pos + node.nodeSize, author: mark.attrs.author, date: mark.attrs.date, level });
     }
     return false;
   });
@@ -105,6 +113,8 @@ export const SKIP_META = "suggestions-skip";
 export interface SuggestionOptions {
   isOn: () => boolean;
   author: () => string;
+  /** Niveau de révision des nouvelles suggestions (1 à 5). */
+  level: () => number;
 }
 
 const key = new PluginKey("suggestions");
@@ -139,11 +149,19 @@ function resolve(tr: Transaction, from: number, to: number, accept: boolean) {
   return tr.setMeta(SKIP_META, true);
 }
 
+/** Toutes les suggestions, ou seulement celles d'un niveau de révision. */
+function resolveLevel(tr: Transaction, accept: boolean, level?: number) {
+  if (!level) return resolve(tr, 0, tr.doc.content.size, accept);
+  // De la fin vers le début : les positions restent justes.
+  for (const c of listChanges(tr.doc).filter((c) => c.level === level).reverse()) resolve(tr, c.from, c.to, accept);
+  return tr;
+}
+
 export const Suggestions = Extension.create<SuggestionOptions>({
   name: "suggestions",
 
   addOptions() {
-    return { isOn: () => false, author: () => "" };
+    return { isOn: () => false, author: () => "", level: () => 1 };
   },
 
   addCommands() {
@@ -161,15 +179,15 @@ export const Suggestions = Extension.create<SuggestionOptions>({
           return true;
         },
       acceptAllChanges:
-        () =>
+        (level) =>
         ({ tr, dispatch }) => {
-          if (dispatch) resolve(tr, 0, tr.doc.content.size, true);
+          if (dispatch) resolveLevel(tr, true, level);
           return true;
         },
       rejectAllChanges:
-        () =>
+        (level) =>
         ({ tr, dispatch }) => {
-          if (dispatch) resolve(tr, 0, tr.doc.content.size, false);
+          if (dispatch) resolveLevel(tr, false, level);
           return true;
         },
     };
@@ -184,7 +202,12 @@ export const Suggestions = Extension.create<SuggestionOptions>({
           if (!options.isOn()) return null;
           const { insertion, deletion } = newState.schema.marks;
           if (!insertion || !deletion) return null;
-          const attrs = { author: options.author(), date: new Date().toISOString().replace(/\.\d+Z$/, "Z") };
+          const level = options.level();
+          const attrs = {
+            author: options.author(),
+            date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+            level: level > 1 ? level : null,
+          };
 
           const inserted: [number, number][] = [];
           const deleted: { pos: number; slice: Slice; cursor: "start" | "end" | "keep" }[] = [];

@@ -509,10 +509,10 @@ impl Reader {
             }
             // Suivi des modifications : des suggestions dans Text Machine.
             Some(kind @ ("insert" | "delete")) => {
-                let attrs = ChangeAttrs {
-                    author: data["author"].as_str().unwrap_or_default().to_string(),
-                    date: data["date"].as_str().unwrap_or_default().to_string(),
-                };
+                let attrs = ChangeAttrs::from_word_author(
+                    data["author"].as_str().unwrap_or_default(),
+                    data["date"].as_str().unwrap_or_default(),
+                );
                 let mut marks = marks.to_vec();
                 marks.push(if kind == "insert" {
                     Mark::Insertion { attrs }
