@@ -170,6 +170,10 @@ pub struct BlockStyle {
     /// Retrait à gauche, en nombre de crans (1 cran = 1,27 cm).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub indent: Option<u8>,
+    /// Style de paragraphe créé par l'utilisateur (identifiant d'un
+    /// [`CustomStyle`] de la feuille de styles).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_style: Option<String>,
 }
 
 impl BlockStyle {
@@ -242,6 +246,16 @@ pub enum Mark {
     },
     Subscript,
     Superscript,
+    /// Style de caractère créé par l'utilisateur.
+    CharStyle {
+        attrs: CharStyleAttrs,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharStyleAttrs {
+    /// Identifiant d'un [`CustomStyle`] de type caractère.
+    pub id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -582,6 +596,29 @@ impl ParagraphStyle {
     }
 }
 
+/// Un style ajouté par l'utilisateur : de paragraphe (« Citation longue »,
+/// « Dialogue »…) ou de caractère (« Terme étranger »…). Un style de
+/// caractère n'utilise que la police, la taille, le gras, l'italique et la
+/// couleur.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomStyle {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub kind: StyleKind,
+    #[serde(default)]
+    pub style: ParagraphStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StyleKind {
+    #[default]
+    Paragraph,
+    Character,
+}
+
 /// La feuille de styles du document : un style par type de paragraphe.
 /// Les titres de niveau 1 à 4 de l'éditeur sont « Titre », « Titre 1 »,
 /// « Titre 2 » et « Titre 3 ».
@@ -593,6 +630,9 @@ pub struct StyleSheet {
     pub heading1: ParagraphStyle,
     pub heading2: ParagraphStyle,
     pub heading3: ParagraphStyle,
+    /// Styles créés par l'utilisateur.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub custom: Vec<CustomStyle>,
 }
 
 impl Default for StyleSheet {
@@ -609,6 +649,7 @@ impl Default for StyleSheet {
                 color: Some("#434343".into()),
                 ..ParagraphStyle::heading(14.0, 14.0, 4.0)
             },
+            custom: Vec::new(),
         }
     }
 }
@@ -631,6 +672,11 @@ impl StyleSheet {
             3 => &mut self.heading2,
             _ => &mut self.heading3,
         }
+    }
+
+    /// Un style créé par l'utilisateur, d'après son identifiant.
+    pub fn custom(&self, id: &str) -> Option<&CustomStyle> {
+        self.custom.iter().find(|s| s.id == id)
     }
 
     /// Police effective d'un style (celle du texte normal par défaut).

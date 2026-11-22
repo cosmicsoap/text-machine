@@ -27,6 +27,17 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > signes** (avec ou sans espaces, pour la sélection, l'onglet ou tout le
 > document), majuscules/minuscules, date du jour.
 >
+> **Polices :** toutes les polices installées sur le Mac sont proposées
+> (liste avec recherche, chaque police écrite dans sa forme). On peut aussi
+> importer des fichiers de police (.ttf, .otf, .ttc) ou un dossier entier :
+> Text Machine les garde dans son dossier et les recharge à chaque lancement.
+> Le PDF contient les polices utilisées. Un fichier Word cite le nom de la
+> police : sur un autre ordinateur, il faut qu'elle y soit installée.
+>
+> **Styles personnalisés :** en plus des styles intégrés, on peut créer,
+> renommer et supprimer ses propres styles de paragraphe (« Dialogue »…) et
+> de caractère (« Terme étranger »…). Ils deviennent de vrais styles Word.
+>
 > Les onglets sont gardés dans les fichiers Word (chaque onglet commence
 > par un titre de style « TM Onglet ») et Markdown (un commentaire invisible
 > avant le titre de l'onglet) : ils sont retrouvés à la réouverture. Les

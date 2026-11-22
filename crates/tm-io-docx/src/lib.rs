@@ -18,7 +18,9 @@ use docx_rs::{
     ParagraphBorderPosition, ParagraphBorders, Pic, Run, RunFonts, Shading, SpecialIndentType,
     Start, Style, StyleType, Table, TableCell, TableRow, VertAlignType,
 };
-use tm_model::{Block, BlockStyle, Document, Inline, Mark, PageSetup, ParagraphStyle, StyleSheet};
+use tm_model::{
+    Block, BlockStyle, Document, Inline, Mark, PageSetup, ParagraphStyle, StyleKind, StyleSheet,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DocxError {
@@ -36,6 +38,10 @@ const DEFAULT_FONT: &str = "Georgia";
 /// Styles Word des titres d'onglet (« TMTab1 » = onglet, « TMTab2 » =
 /// sous-onglet…). Ils permettent de retrouver les onglets à l'ouverture.
 pub(crate) const TAB_STYLE_PREFIX: &str = "TMTab";
+/// Styles Word des styles créés par l'utilisateur : « TMStyle<id> » pour un
+/// style de paragraphe, « TMChar<id> » pour un style de caractère.
+pub(crate) const CUSTOM_PARA_PREFIX: &str = "TMStyle";
+pub(crate) const CUSTOM_CHAR_PREFIX: &str = "TMChar";
 /// 1 mm en vingtièmes de point (unité de Word pour les longueurs).
 const TWIPS_PER_MM: f64 = 1440.0 / 25.4;
 /// Un cran de retrait : 1,27 cm, comme dans l'éditeur.
@@ -80,7 +86,8 @@ struct Ctx {
     code: bool,
     /// Cellule d'en-tête de tableau : texte en gras.
     bold: bool,
-    /// Paragraphe de titre : le style Word donne déjà la mise en forme.
+    /// Paragraphe de titre ou de style personnalisé : le style Word donne
+    /// déjà la mise en forme.
     heading: bool,
 }
 
@@ -93,6 +100,7 @@ struct Writer {
     normal: ParagraphStyle,
     /// Premier bloc du document (pas de saut de page avant un onglet).
     first: bool,
+    sheet: StyleSheet,
 }
 
 /// Espacement Word (vingtièmes de point) d'un style.
@@ -172,6 +180,40 @@ impl Writer {
             let style = word_style(id, name, sheet.heading(level)).outline_lvl(outline);
             docx = docx.add_style(style);
         }
+        // Styles créés par l'utilisateur.
+        for custom in &sheet.custom {
+            let style = match custom.kind {
+                StyleKind::Paragraph => word_style(
+                    &format!("{CUSTOM_PARA_PREFIX}{}", custom.id),
+                    &custom.name,
+                    &custom.style,
+                ),
+                StyleKind::Character => {
+                    let st = &custom.style;
+                    let mut s = Style::new(
+                        format!("{CUSTOM_CHAR_PREFIX}{}", custom.id),
+                        StyleType::Character,
+                    )
+                    .name(&custom.name)
+                    .q_format(true)
+                    .size((st.font_size * 2.0).round() as usize);
+                    if let Some(font) = st.font_family.as_deref() {
+                        s = s.fonts(fonts(font));
+                    }
+                    if st.bold {
+                        s = s.bold();
+                    }
+                    if st.italic {
+                        s = s.italic();
+                    }
+                    if let Some(c) = hex(st.color.as_deref()) {
+                        s = s.color(c);
+                    }
+                    s
+                }
+            };
+            docx = docx.add_style(style);
+        }
         // Titres d'onglet : comme le « Titre », en plus gras.
         for level in 1..=tm_model::MAX_TAB_LEVEL {
             let base = sheet.heading(level);
@@ -194,13 +236,29 @@ impl Writer {
             content_width_px: (w_mm - m.left - m.right) * 96.0 / 25.4,
             normal: sheet.normal.clone(),
             first: true,
+            sheet: sheet.clone(),
         }
     }
 
     fn block(&mut self, block: &Block, ctx: &Ctx) {
         match block {
             Block::Paragraph { attrs, content } => {
-                let p = self.paragraph(attrs, content, ctx);
+                let custom = attrs.custom_style.as_deref().filter(|id| {
+                    self.sheet
+                        .custom(id)
+                        .is_some_and(|c| c.kind == StyleKind::Paragraph)
+                });
+                let p = match custom {
+                    Some(id) => {
+                        let inner = Ctx {
+                            heading: true,
+                            ..ctx.clone()
+                        };
+                        self.paragraph(attrs, content, &inner)
+                            .style(&format!("{CUSTOM_PARA_PREFIX}{id}"))
+                    }
+                    None => self.paragraph(attrs, content, ctx),
+                };
                 self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
             }
             Block::Heading { attrs, content } => {
@@ -439,7 +497,16 @@ impl Writer {
         if ctx.bold {
             run = run.bold();
         }
-        if !ctx.heading && !ctx.code {
+        let char_style = marks.iter().find_map(|m| match m {
+            Mark::CharStyle { attrs } if self.sheet.custom(&attrs.id).is_some() => {
+                Some(attrs.id.as_str())
+            }
+            _ => None,
+        });
+        if let Some(id) = char_style {
+            run = run.style(&format!("{CUSTOM_CHAR_PREFIX}{id}"));
+        }
+        if !ctx.heading && !ctx.code && char_style.is_none() {
             if self.normal.bold {
                 run = run.bold();
             }
@@ -461,6 +528,7 @@ impl Writer {
                 Mark::Strike => run.strike(),
                 Mark::Code => run.fonts(fonts("Courier New")),
                 Mark::Link { .. } => run.color("1155CC").underline("single"),
+                Mark::CharStyle { .. } => run,
                 Mark::Superscript => {
                     run.run_property = run.run_property.vert_align(VertAlignType::SuperScript);
                     run
@@ -830,5 +898,59 @@ mod import_tests {
         let (doc, _, back_styles) = import(&bytes).unwrap();
         assert_eq!(split_tabs(doc), tabs);
         assert_eq!(back_styles, styles);
+    }
+
+    #[test]
+    fn styles_personnalises_aller_retour() {
+        use tm_model::{CharStyleAttrs, CustomStyle};
+        let mut styles = StyleSheet::default();
+        styles.custom.push(CustomStyle {
+            id: "dialogue".into(),
+            name: "Dialogue".into(),
+            kind: StyleKind::Paragraph,
+            style: ParagraphStyle {
+                font_family: Some("Avenir Next".into()),
+                italic: true,
+                space_after: 10.0,
+                ..ParagraphStyle::default()
+            },
+        });
+        styles.custom.push(CustomStyle {
+            id: "etranger".into(),
+            name: "Terme étranger".into(),
+            kind: StyleKind::Character,
+            style: ParagraphStyle {
+                italic: true,
+                color: Some("#1a73e8".into()),
+                ..ParagraphStyle::default()
+            },
+        });
+        let doc = Document::new(vec![
+            Block::Paragraph {
+                attrs: BlockStyle {
+                    custom_style: Some("dialogue".into()),
+                    ..BlockStyle::default()
+                },
+                content: vec![Inline::text("— Bonjour.")],
+            },
+            Block::Paragraph {
+                attrs: BlockStyle::default(),
+                content: vec![
+                    Inline::text("Un "),
+                    Inline::Text {
+                        text: "leitmotiv".into(),
+                        marks: vec![Mark::CharStyle {
+                            attrs: CharStyleAttrs {
+                                id: "etranger".into(),
+                            },
+                        }],
+                    },
+                ],
+            },
+        ]);
+        let bytes = export(&doc, &PageSetup::default(), &styles).unwrap();
+        let (back, _, back_styles) = import(&bytes).unwrap();
+        assert_eq!(back, doc);
+        assert_eq!(back_styles.custom, styles.custom);
     }
 }

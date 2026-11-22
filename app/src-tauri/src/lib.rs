@@ -4,6 +4,7 @@
 //! `invoke(...)`. Le document circule au format JSON de TipTap, converti en
 //! `tm_model::Document` à l'entrée.
 
+mod fonts;
 mod formats;
 mod pdf;
 mod session;
@@ -98,12 +99,51 @@ async fn export_pdf(
     pdf::export(&window, &path, &page, pages).await
 }
 
+// --- Polices --------------------------------------------------------------------
+
+/// Familles des polices installées sur l'ordinateur (lues une seule fois).
+#[tauri::command]
+async fn list_system_fonts() -> Vec<String> {
+    static CACHE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(fonts::system_families).clone()
+}
+
+#[tauri::command]
+fn list_imported_fonts(app: AppHandle) -> Result<Vec<fonts::ImportedFont>, String> {
+    Ok(fonts::imported(&fonts::fonts_dir(&app)?))
+}
+
+/// Le contenu d'une police importée, pour que l'éditeur la charge.
+#[tauri::command]
+fn read_imported_font(app: AppHandle, file: String) -> Result<tauri::ipc::Response, String> {
+    let path =
+        fonts::safe_file(&fonts::fonts_dir(&app)?, &file).ok_or("nom de fichier invalide")?;
+    Ok(tauri::ipc::Response::new(
+        std::fs::read(path).map_err(|e| e.to_string())?,
+    ))
+}
+
+#[tauri::command]
+fn import_fonts(app: AppHandle, paths: Vec<String>) -> Result<Vec<String>, String> {
+    fonts::import(&fonts::fonts_dir(&app)?, &paths)
+}
+
+#[tauri::command]
+fn remove_imported_font(app: AppHandle, family: String) -> Result<(), String> {
+    fonts::remove(&fonts::fonts_dir(&app)?, &family)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             text_stats,
+            list_system_fonts,
+            list_imported_fonts,
+            read_imported_font,
+            import_fonts,
+            remove_imported_font,
             save_default_styles,
             open_document,
             save_document,

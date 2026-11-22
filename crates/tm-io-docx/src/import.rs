@@ -10,9 +10,10 @@ use std::collections::HashMap;
 use base64::Engine;
 use serde_json::Value;
 use tm_model::{
-    Block, BlockStyle, CellAttrs, Document, HeadingAttrs, HighlightAttrs, ImageAttrs, Inline,
-    LinkAttrs, Margins, Mark, OrderedListAttrs, PageSetup, PageSize, ParagraphStyle, StyleSheet,
-    TabTitleAttrs, TaskItemAttrs, TextStyleAttrs, MAX_TAB_LEVEL,
+    Block, BlockStyle, CellAttrs, CharStyleAttrs, CustomStyle, Document, HeadingAttrs,
+    HighlightAttrs, ImageAttrs, Inline, LinkAttrs, Margins, Mark, OrderedListAttrs, PageSetup,
+    PageSize, ParagraphStyle, StyleKind, StyleSheet, TabTitleAttrs, TaskItemAttrs, TextStyleAttrs,
+    MAX_TAB_LEVEL,
 };
 
 use crate::DocxError;
@@ -53,7 +54,24 @@ fn read_styles(styles: &Value, headings: &HashMap<String, u8>) -> StyleSheet {
     for style in styles["styles"].as_array().into_iter().flatten() {
         let id = style["styleId"].as_str().unwrap_or_default();
         let (run, para) = (&style["runProperty"], &style["paragraphProperty"]);
-        if id == "Normal" {
+        let custom = id
+            .strip_prefix(crate::CUSTOM_PARA_PREFIX)
+            .map(|rest| (rest, StyleKind::Paragraph))
+            .or_else(|| {
+                id.strip_prefix(crate::CUSTOM_CHAR_PREFIX)
+                    .map(|rest| (rest, StyleKind::Character))
+            });
+        if let Some((custom_id, kind)) = custom.filter(|(rest, _)| !rest.is_empty()) {
+            let mut st = ParagraphStyle::default();
+            apply_word_style(&mut st, run, para);
+            let name = style["name"].as_str().unwrap_or(custom_id).to_string();
+            sheet.custom.push(CustomStyle {
+                id: custom_id.to_string(),
+                name,
+                kind,
+                style: st,
+            });
+        } else if id == "Normal" {
             apply_word_style(&mut sheet.normal, run, para);
         } else if let Some(&level) = headings.get(id) {
             // Plusieurs styles peuvent donner le même niveau : le premier gagne.
@@ -271,6 +289,13 @@ impl Reader {
             .as_str()
             .and_then(|s| self.headings.get(s))
             .copied();
+        if heading.is_none() {
+            style.custom_style = prop["style"]
+                .as_str()
+                .and_then(|s| s.strip_prefix(crate::CUSTOM_PARA_PREFIX))
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+        }
         // Une citation : trait à gauche, sans numérotation ni titre.
         let quote = numbering.is_none()
             && heading.is_none()
@@ -435,6 +460,15 @@ impl Reader {
             _ => true,
         };
         let mut marks = Vec::new();
+        if let Some(id) = rp["style"]
+            .as_str()
+            .and_then(|s| s.strip_prefix(crate::CUSTOM_CHAR_PREFIX))
+            .filter(|s| !s.is_empty())
+        {
+            marks.push(Mark::CharStyle {
+                attrs: CharStyleAttrs { id: id.to_string() },
+            });
+        }
         if on("bold") {
             marks.push(Mark::Bold);
         }

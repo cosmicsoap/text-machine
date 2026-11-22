@@ -29,18 +29,28 @@ import {
 } from "./extensions/pagination";
 import { Search, getSearchState } from "./extensions/search";
 import { ParagraphFormat } from "./extensions/paragraph-format";
+import { CharStyle, CustomParagraphStyle } from "./extensions/custom-styles";
+import { allFonts, initFonts, onFontsChange, openFontPicker } from "./fonts";
 import { MAX_TAB_LEVEL, TabTree, type TabData, type TabNode } from "./tabs";
 import {
   DEFAULT_STYLES,
   STYLE_KEYS,
   STYLE_LEVEL,
-  STYLE_NAMES,
+  customId,
+  customRef,
+  findCustom,
   fontOf,
+  getStyle,
+  newStyleId,
+  styleName,
   normalizeStyles,
   previewCss,
   styleOfLevel,
   stylesToCss,
+  type CustomStyle,
+  type ParagraphStyle,
   type StyleKey,
+  type StyleRef,
   type StyleSheet,
 } from "./stylesheet";
 import { ICONS } from "./icons";
@@ -110,6 +120,8 @@ const editor = new Editor({
     TaskList,
     TaskItem.configure({ nested: true }),
     ParagraphFormat,
+    CustomParagraphStyle,
+    CharStyle,
     PageBreak,
     Search,
     Pagination.configure({
@@ -352,6 +364,7 @@ const styleElement = document.head.appendChild(document.createElement("style"));
 function setStyles(next: StyleSheet, dirty = true) {
   styles = normalizeStyles(next);
   styleElement.textContent = stylesToCss(styles);
+  renderStyleSelect();
   if (dirty) markDirty();
   refreshToolbar();
   // Les hauteurs changent : on recalcule les pages.
@@ -359,15 +372,50 @@ function setStyles(next: StyleSheet, dirty = true) {
 }
 
 /** Style du paragraphe où se trouve le curseur. */
-function currentStyleKey(): StyleKey {
+function currentStyleKey(): StyleRef {
   const level = [1, 2, 3, 4].find((l) => editor.isActive("heading", { level: l }));
-  return level ? styleOfLevel(level) : "normal";
+  if (level) return styleOfLevel(level);
+  const custom = editor.getAttributes("paragraph").customStyle;
+  return custom && styles.custom.some((c) => c.id === custom && c.kind === "paragraph") ? customRef(custom) : "normal";
 }
 
-function applyStyle(key: StyleKey) {
-  const level = STYLE_LEVEL[key];
-  if (level === 0) chain().setParagraph().run();
+/** Style de caractère du texte au curseur. */
+function currentCharStyle(): string | null {
+  return editor.getAttributes("charStyle").id ?? null;
+}
+
+function applyStyle(ref: StyleRef) {
+  const custom = findCustom(styles, ref);
+  if (custom?.kind === "character") {
+    if (currentCharStyle() === custom.id) chain().unsetCharStyle().run();
+    else chain().setCharStyle(custom.id).run();
+    return;
+  }
+  if (custom) return void chain().setCustomParagraphStyle(custom.id).run();
+  const level = STYLE_LEVEL[ref as StyleKey];
+  if (level === 0) chain().setCustomParagraphStyle(null).run();
   else chain().setHeading({ level: level as 1 | 2 | 3 | 4 }).run();
+}
+
+/** Remplace un style de la feuille (intégré ou créé par l'utilisateur). */
+function withStyle(sheet: StyleSheet, ref: StyleRef, style: ParagraphStyle): StyleSheet {
+  const id = customId(ref);
+  if (!id) return { ...sheet, [ref]: style };
+  return { ...sheet, custom: sheet.custom.map((c) => (c.id === id ? { ...c, style } : c)) };
+}
+
+/** La mise en forme du texte au curseur, vue comme un style. */
+function styleFromSelection(base: ParagraphStyle, withBlock: boolean): ParagraphStyle {
+  const style = { ...base };
+  const text = editor.getAttributes("textStyle");
+  const block = blockAttrs();
+  if (text.fontFamily) style.fontFamily = String(text.fontFamily).replace(/["']/g, "");
+  if (text.fontSize) style.fontSize = parseFloat(text.fontSize) || style.fontSize;
+  if (text.color) style.color = text.color;
+  if (editor.isActive("bold")) style.bold = true;
+  if (editor.isActive("italic")) style.italic = true;
+  if (withBlock && block.lineHeight) style.lineHeight = parseFloat(block.lineHeight) || style.lineHeight;
+  return style;
 }
 
 /**
@@ -377,16 +425,7 @@ function applyStyle(key: StyleKey) {
  */
 function updateStyleFromSelection() {
   const key = currentStyleKey();
-  const style = { ...styles[key] };
-  const text = editor.getAttributes("textStyle");
-  const block = editor.getAttributes(key === "normal" ? "paragraph" : "heading");
-  if (text.fontFamily) style.fontFamily = String(text.fontFamily).replace(/["']/g, "");
-  if (text.fontSize) style.fontSize = parseFloat(text.fontSize) || style.fontSize;
-  if (text.color) style.color = text.color;
-  if (editor.isActive("bold")) style.bold = true;
-  if (editor.isActive("italic")) style.italic = true;
-  if (block.lineHeight) style.lineHeight = parseFloat(block.lineHeight) || style.lineHeight;
-  setStyles({ ...styles, [key]: style });
+  setStyles(withStyle(styles, key, styleFromSelection(getStyle(styles, key), true)));
   const { $from, from, to } = editor.state.selection;
   editor
     .chain()
@@ -400,44 +439,110 @@ function updateStyleFromSelection() {
     .setBlockLineHeight(null)
     .setTextSelection({ from, to })
     .run();
-  setSaveStatus(`Style « ${STYLE_NAMES[key]} » mis à jour`);
+  setSaveStatus(`Style « ${styleName(styles, key)} » mis à jour`);
 }
 
-// Fenêtre « Styles de paragraphe ».
+/** Nouveau style, d'après la mise en forme du texte au curseur. */
+function createStyle(kind: CustomStyle["kind"], openDialog = true) {
+  const n = styles.custom.filter((c) => c.kind === kind).length + 1;
+  const base = getStyle(styles, currentStyleKey());
+  const style: ParagraphStyle =
+    kind === "paragraph"
+      ? styleFromSelection({ ...base }, true)
+      : { ...styleFromSelection({ ...DEFAULT_STYLES.normal, fontFamily: null, fontSize: currentFontSize() }, false) };
+  if (kind === "character" && !editor.getAttributes("textStyle").fontFamily) style.fontFamily = null;
+  const custom: CustomStyle = {
+    id: newStyleId(),
+    name: kind === "paragraph" ? `Mon style ${n}` : `Style de caractère ${n}`,
+    kind,
+    style,
+  };
+  setStyles({ ...styles, custom: [...styles.custom, custom] });
+  if (openDialog) {
+    editingStyle = customRef(custom.id);
+    renderStyleDialog();
+    if (!stylesDialog.open) stylesDialog.showModal();
+    styleField("name").select();
+  }
+  return custom;
+}
+
+async function deleteStyle(ref: StyleRef) {
+  const custom = findCustom(styles, ref);
+  if (!custom) return;
+  const ok = await confirmDialog(
+    `Supprimer le style « ${custom.name} » ? Le texte de ce style reprendra le style « Texte normal ».`,
+    "Supprimer",
+  );
+  if (!ok) return;
+  setStyles({ ...styles, custom: styles.custom.filter((c) => c.id !== custom.id) });
+  editingStyle = "normal";
+  if (stylesDialog.open) renderStyleDialog();
+}
+
+// Fenêtre « Styles ».
 const stylesDialog = $<HTMLDialogElement>("#styles-dialog");
 const styleList = $<HTMLUListElement>("#style-list");
 const styleForm = $<HTMLElement>("#style-form");
-let editingStyle: StyleKey = "normal";
+let editingStyle: StyleRef = "normal";
 const styleField = (name: string) => styleForm.querySelector<HTMLInputElement & HTMLSelectElement>(`[name="${name}"]`)!;
 
 function fontOptions(select: HTMLSelectElement, current: string, inherit?: string) {
-  const fonts = [...$<HTMLSelectElement>("#font-family").options].map((o) => o.value);
+  const fonts = allFonts();
   if (current && !fonts.includes(current)) fonts.push(current);
   select.replaceChildren();
-  if (inherit) select.append(new Option(`Comme le texte normal (${inherit})`, ""));
-  for (const f of fonts.sort((a, b) => a.localeCompare(b))) select.append(new Option(f, f));
+  if (inherit) select.append(new Option(inherit, ""));
+  for (const f of fonts) select.append(new Option(f, f));
   select.value = current;
 }
 
+/** Tous les styles, dans l'ordre des listes : intégrés, puis créés. */
+function allStyleRefs(): StyleRef[] {
+  return [...STYLE_KEYS, ...styles.custom.map((c) => customRef(c.id))];
+}
+
 function renderStyleDialog() {
+  const item = (ref: StyleRef) => {
+    const li = document.createElement("li");
+    li.textContent = styleName(styles, ref);
+    li.setAttribute("style", previewCss(styles, ref));
+    li.dataset.ref = ref;
+    li.classList.toggle("active", ref === editingStyle);
+    li.addEventListener("click", () => {
+      editingStyle = ref;
+      renderStyleDialog();
+    });
+    return li;
+  };
+  const heading = (text: string) => {
+    const li = document.createElement("li");
+    li.className = "style-group";
+    li.textContent = text;
+    return li;
+  };
+  const paras = styles.custom.filter((c) => c.kind === "paragraph").map((c) => customRef(c.id));
+  const chars = styles.custom.filter((c) => c.kind === "character").map((c) => customRef(c.id));
   styleList.replaceChildren(
-    ...STYLE_KEYS.map((key) => {
-      const li = document.createElement("li");
-      li.textContent = STYLE_NAMES[key];
-      li.setAttribute("style", previewCss(styles, key));
-      li.classList.toggle("active", key === editingStyle);
-      li.addEventListener("click", () => {
-        editingStyle = key;
-        renderStyleDialog();
-      });
-      return li;
-    }),
+    heading("Styles de paragraphe"),
+    ...[...STYLE_KEYS, ...paras].map(item),
+    ...(chars.length ? [heading("Styles de caractère"), ...chars.map(item)] : []),
   );
-  const s = styles[editingStyle];
+  const custom = findCustom(styles, editingStyle);
+  const character = custom?.kind === "character";
+  const s = getStyle(styles, editingStyle);
+  $("#style-name-row").hidden = !custom;
+  styleField("name").value = custom?.name ?? "";
+  $("#style-spacing").hidden = character;
+  $("#style-delete").hidden = !custom;
+  $("#style-reset").hidden = !!custom;
   fontOptions(
     styleField("fontFamily"),
     editingStyle === "normal" ? fontOf(styles, "normal") : (s.fontFamily ?? ""),
-    editingStyle === "normal" ? undefined : fontOf(styles, "normal"),
+    editingStyle === "normal"
+      ? undefined
+      : character
+        ? "Celle du paragraphe"
+        : `Comme le texte normal (${fontOf(styles, "normal")})`,
   );
   styleField("fontSize").value = String(s.fontSize);
   styleField("color").value = s.color || "#000000";
@@ -450,42 +555,51 @@ function renderStyleDialog() {
   styleField("spaceAfter").value = String(s.spaceAfter);
 }
 
-function readStyleForm() {
+function readStyleForm(event: Event) {
   const num = (name: string, fallback: number, min: number, max: number) => {
     const v = parseFloat(styleField(name).value.replace(",", "."));
     return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
   };
-  const s = styles[editingStyle];
+  const s = getStyle(styles, editingStyle);
   const color = styleField("color").value;
-  setStyles({
-    ...styles,
-    [editingStyle]: {
-      fontFamily: styleField("fontFamily").value || null,
-      fontSize: num("fontSize", s.fontSize, 6, 96),
-      bold: styleField("bold").checked,
-      italic: styleField("italic").checked,
-      color: color.toLowerCase() === "#000000" ? null : color,
-      lineHeight: num("lineHeight", s.lineHeight, 0.8, 3),
-      spaceBefore: num("spaceBefore", s.spaceBefore, 0, 96),
-      spaceAfter: num("spaceAfter", s.spaceAfter, 0, 96),
-    },
+  let next = withStyle(styles, editingStyle, {
+    fontFamily: styleField("fontFamily").value || null,
+    fontSize: num("fontSize", s.fontSize, 6, 96),
+    bold: styleField("bold").checked,
+    italic: styleField("italic").checked,
+    color: color.toLowerCase() === "#000000" ? null : color,
+    lineHeight: num("lineHeight", s.lineHeight, 0.8, 3),
+    spaceBefore: num("spaceBefore", s.spaceBefore, 0, 96),
+    spaceAfter: num("spaceAfter", s.spaceAfter, 0, 96),
   });
+  const id = customId(editingStyle);
+  const name = styleField("name").value.trim();
+  if (id && name && (event.target as HTMLElement).getAttribute("name") === "name") {
+    next = { ...next, custom: next.custom.map((c) => (c.id === id ? { ...c, name } : c)) };
+  }
+  setStyles(next);
   // Seule la liste change (le formulaire garde le champ en cours de saisie).
-  for (const [i, li] of [...styleList.children].entries()) {
-    li.setAttribute("style", previewCss(styles, STYLE_KEYS[i]));
+  for (const li of styleList.querySelectorAll<HTMLElement>("li[data-ref]")) {
+    const ref = li.dataset.ref as StyleRef;
+    li.setAttribute("style", previewCss(styles, ref));
+    li.textContent = styleName(styles, ref);
   }
 }
 
 styleForm.addEventListener("input", readStyleForm);
 styleForm.addEventListener("change", readStyleForm);
 $("#style-reset").addEventListener("click", () => {
-  setStyles({ ...styles, [editingStyle]: structuredClone((defaultStyles ?? DEFAULT_STYLES)[editingStyle]) });
+  const key = editingStyle as StyleKey;
+  setStyles({ ...styles, [key]: structuredClone((defaultStyles ?? DEFAULT_STYLES)[key]) });
   renderStyleDialog();
 });
+$("#style-delete").addEventListener("click", () => deleteStyle(editingStyle));
+$("#style-new-para").addEventListener("click", () => createStyle("paragraph"));
+$("#style-new-char").addEventListener("click", () => createStyle("character"));
 $("#styles-save-default").addEventListener("click", saveDefaultStyles);
 
-function openStylesDialog() {
-  editingStyle = currentStyleKey();
+function openStylesDialog(ref?: StyleRef) {
+  editingStyle = ref ?? currentStyleKey();
   renderStyleDialog();
   stylesDialog.showModal();
 }
@@ -506,21 +620,39 @@ function useDefaultStyles() {
 }
 
 function styleMenu(): MenuItem[] {
+  const current = currentStyleKey();
+  const char = currentCharStyle();
+  const paras = allStyleRefs().filter((r) => findCustom(styles, r)?.kind !== "character");
+  const chars = styles.custom.filter((c) => c.kind === "character");
   return [
-    ...STYLE_KEYS.map((key) => ({
-      label: STYLE_NAMES[key],
-      checked: key === currentStyleKey(),
+    ...paras.map((ref) => ({
+      label: styleName(styles, ref),
+      checked: ref === current,
       submenu: [
-        { label: `Appliquer « ${STYLE_NAMES[key]} »`, action: () => applyStyle(key) },
+        { label: `Appliquer « ${styleName(styles, ref)} »`, action: () => applyStyle(ref) },
         {
-          label: `Mettre à jour « ${STYLE_NAMES[key]} » selon la sélection`,
-          disabled: key !== currentStyleKey(),
+          label: `Mettre à jour « ${styleName(styles, ref)} » selon la sélection`,
+          disabled: ref !== current,
           action: updateStyleFromSelection,
         },
+        { label: "Modifier…", action: () => openStylesDialog(ref) },
       ],
     })),
+    ...(chars.length
+      ? [
+          SEP,
+          ...chars.map((c) => ({
+            label: c.name,
+            checked: c.id === char,
+            action: () => applyStyle(customRef(c.id)),
+          })),
+        ]
+      : []),
     SEP,
-    { label: "Modifier les styles…", action: openStylesDialog },
+    { label: "Nouveau style de paragraphe…", action: () => createStyle("paragraph") },
+    { label: "Nouveau style de caractère…", action: () => createStyle("character") },
+    { label: "Modifier les styles…", action: () => openStylesDialog() },
+    SEP,
     { label: "Enregistrer comme styles par défaut", action: saveDefaultStyles },
     { label: "Utiliser les styles par défaut", action: useDefaultStyles },
     {
@@ -528,6 +660,29 @@ function styleMenu(): MenuItem[] {
       action: () => setStyles(structuredClone(DEFAULT_STYLES)),
     },
   ];
+}
+
+/** La liste « Style » de la barre d'outils : intégrés, créés, caractère. */
+function renderStyleSelect() {
+  const groups: [string, StyleRef[]][] = [
+    ["", [...STYLE_KEYS]],
+    ["Mes styles de paragraphe", styles.custom.filter((c) => c.kind === "paragraph").map((c) => customRef(c.id))],
+    ["Styles de caractère", styles.custom.filter((c) => c.kind === "character").map((c) => customRef(c.id))],
+  ];
+  blockSelect.replaceChildren();
+  for (const [label, refs] of groups) {
+    if (!refs.length) continue;
+    const parent = label ? document.createElement("optgroup") : blockSelect;
+    if (parent instanceof HTMLOptGroupElement) parent.label = label;
+    for (const ref of refs) parent.append(new Option(styleName(styles, ref), ref));
+    if (parent !== blockSelect) blockSelect.append(parent);
+  }
+  const more = document.createElement("optgroup");
+  more.label = "──────────";
+  more.append(new Option("Nouveau style de paragraphe…", "new:paragraph"));
+  more.append(new Option("Nouveau style de caractère…", "new:character"));
+  more.append(new Option("Modifier les styles…", "edit"));
+  blockSelect.append(more);
 }
 
 // --- Majuscules / minuscules ------------------------------------------------------
@@ -1243,7 +1398,7 @@ function lineHeightMenu(): MenuItem[] {
     })),
     SEP,
     {
-      label: `Celui du style (${String(styles[currentStyleKey()].lineHeight).replace(".", ",")})`,
+      label: `Celui du style (${String(getStyle(styles, currentStyleKey()).lineHeight).replace(".", ",")})`,
       checked: current === null,
       action: () => chain().setBlockLineHeight(null).run(),
     },
@@ -1357,7 +1512,7 @@ setupMenubar($("#menubar"), [
           },
         ],
       },
-      { label: "Styles de paragraphe", submenu: styleMenu() },
+      { label: "Styles", submenu: styleMenu() },
       {
         label: "Aligner et mettre en retrait",
         submenu: [
@@ -1391,7 +1546,8 @@ setupMenubar($("#menubar"), [
       { label: "Nombre de mots…", shortcut: "⇧⌘C", action: openCountDialog },
       { label: "Correcteur orthographique", checked: (editor.view.dom as HTMLElement).spellcheck, action: toggleSpellcheck },
       SEP,
-      { label: "Modifier les styles de paragraphe…", action: openStylesDialog },
+      { label: "Modifier les styles…", action: () => openStylesDialog() },
+      { label: "Polices…", action: () => openFontPicker(fontButton, fontName.textContent ?? "", chooseFont) },
     ],
   },
 ]);
@@ -1412,7 +1568,8 @@ function toggleSpellcheck() {
 
 const toolbar = $<HTMLElement>("#toolbar");
 const blockSelect = $<HTMLSelectElement>("#block-style");
-const fontFamilySelect = $<HTMLSelectElement>("#font-family");
+const fontButton = $<HTMLButtonElement>("#font-button");
+const fontName = $<HTMLElement>("#font-name");
 const fontSizeInput = $<HTMLInputElement>("#font-size");
 const textColor = $<HTMLInputElement>("#text-color");
 const highlightColor = $<HTMLInputElement>("#highlight-color");
@@ -1427,7 +1584,10 @@ const blockAttrs = () =>
 /** Taille du texte au curseur, en points (celle du style si rien n'est choisi). */
 function currentFontSize() {
   const size = parseFloat(editor.getAttributes("textStyle").fontSize ?? "");
-  return Number.isFinite(size) ? size : styles[currentStyleKey()].fontSize;
+  if (Number.isFinite(size)) return size;
+  const char = currentCharStyle();
+  const custom = char ? findCustom(styles, customRef(char)) : undefined;
+  return custom ? custom.style.fontSize : getStyle(styles, currentStyleKey()).fontSize;
 }
 
 function setFontSize(size: number) {
@@ -1526,15 +1686,21 @@ toolbar.addEventListener("click", (event) => {
 
 blockSelect.addEventListener("change", () => {
   const value = blockSelect.value;
-  applyStyle(value === "p" ? "normal" : styleOfLevel(Number(value)));
+  if (value === "new:paragraph" || value === "new:character") createStyle(value.slice(4) as CustomStyle["kind"]);
+  else if (value === "edit") openStylesDialog();
+  else applyStyle(value as StyleRef);
+  refreshToolbar();
 });
 
-fontFamilySelect.addEventListener("change", () => {
-  const font = fontFamilySelect.value;
+/** Applique une police au texte sélectionné. */
+function chooseFont(font: string) {
   // La police du style : on retire la police choisie à la main.
   if (font === fontOf(styles, currentStyleKey())) chain().unsetFontFamily().run();
   else chain().setFontFamily(font).run();
-});
+}
+
+fontButton.addEventListener("mousedown", (e) => e.preventDefault());
+fontButton.addEventListener("click", () => openFontPicker(fontButton, fontName.textContent ?? "", chooseFont));
 
 fontSizeInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -1606,12 +1772,16 @@ function refreshToolbar() {
   toolbar.querySelector('[data-action="redo"]')?.toggleAttribute("disabled", !editor.can().redo());
 
   const key = currentStyleKey();
-  blockSelect.value = STYLE_LEVEL[key] ? String(STYLE_LEVEL[key]) : "p";
+  // Un style de caractère au curseur passe avant le style du paragraphe.
+  const char = currentCharStyle();
+  const shown: StyleRef = char && styles.custom.some((c) => c.id === char) ? customRef(char) : key;
+  if (blockSelect.value !== shown) blockSelect.value = shown;
 
   const style = editor.getAttributes("textStyle");
-  const font = style.fontFamily ? String(style.fontFamily).replace(/["']/g, "") : fontOf(styles, key);
-  if (![...fontFamilySelect.options].some((o) => o.value === font)) fontFamilySelect.append(new Option(font, font));
-  fontFamilySelect.value = font;
+  const charFont = char ? findCustom(styles, customRef(char))?.style.fontFamily : null;
+  const font = style.fontFamily ? String(style.fontFamily).replace(/["']/g, "") : (charFont ?? fontOf(styles, key));
+  fontName.textContent = font;
+  fontButton.style.fontFamily = `"${font}", Georgia, serif`;
   if (document.activeElement !== fontSizeInput) {
     fontSizeInput.value = String(currentFontSize()).replace(".", ",");
   }
@@ -1687,6 +1857,10 @@ refreshToolbar();
 toolbar.querySelector('[data-action="spellcheck"]')?.classList.add("active");
 updateCounts();
 restoreSession();
+onFontsChange(() => {
+  if (stylesDialog.open) renderStyleDialog();
+});
+initFonts();
 
 // En développement, l'éditeur est accessible depuis la console (`editor`).
 if (import.meta.env.DEV) (window as unknown as { editor: Editor; tabs: TabTree }).editor = editor;

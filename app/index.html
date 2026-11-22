@@ -35,7 +35,7 @@
           <option value="2">200 %</option>
         </select>
         <span class="sep"></span>
-        <select id="block-style" class="wide" title="Style de paragraphe">
+        <select id="block-style" class="wide" title="Style (paragraphe ou caractère)">
           <option value="p">Texte normal</option>
           <option value="1">Titre</option>
           <option value="2">Titre 1</option>
@@ -43,18 +43,7 @@
           <option value="4">Titre 3</option>
         </select>
         <span class="sep"></span>
-        <select id="font-family" class="wide" title="Police">
-          <option>Arial</option>
-          <option>Avenir Next</option>
-          <option>Baskerville</option>
-          <option>Courier New</option>
-          <option>Garamond</option>
-          <option>Georgia</option>
-          <option>Helvetica Neue</option>
-          <option>Palatino</option>
-          <option>Times New Roman</option>
-          <option>Verdana</option>
-        </select>
+        <button type="button" id="font-button" class="font-button" title="Police"><span id="font-name">Georgia</span><span class="arrow">▾</span></button>
         <span class="sep"></span>
         <span class="font-size" title="Taille du texte">
           <button data-action="sizeDown" data-icon="minus" title="Diminuer la taille (⇧⌘,)"></button>
@@ -186,11 +175,20 @@
 
     <dialog id="styles-dialog" class="styles-dialog">
       <form method="dialog">
-        <h2>Styles de paragraphe</h2>
-        <p class="hint">Modifiez un style : tous les paragraphes de ce style changent, dans tous les onglets.</p>
+        <h2>Styles</h2>
+        <p class="hint">Modifiez un style : tout le texte de ce style change, dans tous les onglets.</p>
         <div class="styles-layout">
-          <ul class="style-list" id="style-list"></ul>
+          <div class="style-side">
+            <ul class="style-list" id="style-list"></ul>
+            <div class="style-add">
+              <button type="button" id="style-new-para" class="link-button">+ Nouveau style de paragraphe</button>
+              <button type="button" id="style-new-char" class="link-button">+ Nouveau style de caractère</button>
+            </div>
+          </div>
           <div class="style-form" id="style-form">
+            <label id="style-name-row">Nom du style
+              <input type="text" name="name" autocomplete="off" />
+            </label>
             <label>Police
               <select name="fontFamily"></select>
             </label>
@@ -202,7 +200,7 @@
               <label class="inline"><input type="checkbox" name="bold" /> Gras</label>
               <label class="inline"><input type="checkbox" name="italic" /> Italique</label>
             </div>
-            <div class="row">
+            <div class="row" id="style-spacing">
               <label>Interligne
                 <select name="lineHeight">
                   <option value="1">Simple</option>
@@ -216,6 +214,7 @@
               <label>Espace après (pt) <input type="number" name="spaceAfter" min="0" max="96" step="1" /></label>
             </div>
             <button type="button" id="style-reset" class="link-button">Revenir à la valeur d'origine de ce style</button>
+            <button type="button" id="style-delete" class="link-button danger">Supprimer ce style</button>
           </div>
         </div>
         <menu>

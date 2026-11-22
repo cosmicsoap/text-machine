@@ -21,7 +21,42 @@ export interface ParagraphStyle {
 }
 
 export type StyleKey = "normal" | "title" | "heading1" | "heading2" | "heading3";
-export type StyleSheet = Record<StyleKey, ParagraphStyle>;
+
+/** Un style créé par l'utilisateur (même forme que `CustomStyle` en Rust). */
+export interface CustomStyle {
+  id: string;
+  name: string;
+  /** Un style de caractère n'utilise que police, taille, gras, italique, couleur. */
+  kind: "paragraph" | "character";
+  style: ParagraphStyle;
+}
+
+export type StyleSheet = Record<StyleKey, ParagraphStyle> & { custom: CustomStyle[] };
+
+/** Un style désigné par son nom interne (« heading1 ») ou « custom:<id> ». */
+export type StyleRef = StyleKey | `custom:${string}`;
+
+export const customRef = (id: string): StyleRef => `custom:${id}`;
+export const customId = (ref: StyleRef) => (ref.startsWith("custom:") ? ref.slice(7) : null);
+
+export function findCustom(sheet: StyleSheet, ref: StyleRef) {
+  const id = customId(ref);
+  return id ? sheet.custom.find((c) => c.id === id) : undefined;
+}
+
+export function getStyle(sheet: StyleSheet, ref: StyleRef): ParagraphStyle {
+  const id = customId(ref);
+  if (!id) return sheet[ref as StyleKey];
+  return sheet.custom.find((c) => c.id === id)?.style ?? sheet.normal;
+}
+
+export function styleName(sheet: StyleSheet, ref: StyleRef) {
+  return customId(ref) ? (findCustom(sheet, ref)?.name ?? "Style supprimé") : STYLE_NAMES[ref as StyleKey];
+}
+
+export function newStyleId() {
+  return Math.random().toString(36).slice(2, 10);
+}
 
 export const STYLE_KEYS: StyleKey[] = ["normal", "title", "heading1", "heading2", "heading3"];
 
@@ -56,6 +91,7 @@ const heading = (fontSize: number, spaceBefore: number, spaceAfter: number): Par
 
 /** Les mêmes valeurs que `StyleSheet::default()` en Rust. */
 export const DEFAULT_STYLES: StyleSheet = {
+  custom: [],
   normal: {
     fontFamily: "Georgia",
     fontSize: 12,
@@ -77,29 +113,38 @@ export function normalizeStyles(styles?: Partial<StyleSheet> | null): StyleSheet
   for (const key of STYLE_KEYS) {
     if (styles?.[key]) out[key] = { ...out[key], ...styles[key] };
   }
+  out.custom = (styles?.custom ?? []).map((c) => ({
+    ...c,
+    kind: c.kind === "character" ? "character" : "paragraph",
+    style: { ...DEFAULT_STYLES.normal, fontFamily: null, ...c.style },
+  }));
   return out;
 }
 
-export const fontOf = (sheet: StyleSheet, key: StyleKey) =>
-  sheet[key].fontFamily || sheet.normal.fontFamily || "Georgia";
+export const fontOf = (sheet: StyleSheet, ref: StyleRef) =>
+  getStyle(sheet, ref).fontFamily || sheet.normal.fontFamily || "Georgia";
 
-const cssFont = (font: string) => (/^[\w-]+$/.test(font) ? font : `"${font.replace(/"/g, "")}"`);
+export const cssFont = (font: string) => (/^[\w-]+$/.test(font) ? font : `"${font.replace(/"/g, "")}"`);
 
-function declarations(sheet: StyleSheet, key: StyleKey) {
-  const s = sheet[key];
+function declarations(sheet: StyleSheet, ref: StyleRef) {
+  const s = getStyle(sheet, ref);
+  const character = findCustom(sheet, ref)?.kind === "character";
   return [
-    `font-family: ${cssFont(fontOf(sheet, key))}, Georgia, serif`,
+    // Un style de caractère sans police garde celle du paragraphe.
+    character && !s.fontFamily ? "" : `font-family: ${cssFont(fontOf(sheet, ref))}, Georgia, serif`,
     `font-size: ${s.fontSize}pt`,
     `font-weight: ${s.bold ? "bold" : "normal"}`,
     `font-style: ${s.italic ? "italic" : "normal"}`,
     // Le texte normal hérite sa couleur (une citation reste grise).
-    key === "normal" ? (s.color ? `color: ${s.color}` : "") : `color: ${s.color || "#000000"}`,
-    `line-height: ${s.lineHeight}`,
-    `margin: ${s.spaceBefore}pt 0 ${s.spaceAfter}pt`,
+    ref === "normal" || character ? (s.color ? `color: ${s.color}` : "") : `color: ${s.color || "#000000"}`,
+    character ? "" : `line-height: ${s.lineHeight}`,
+    character ? "" : `margin: ${s.spaceBefore}pt 0 ${s.spaceAfter}pt`,
   ]
     .filter(Boolean)
     .join("; ");
 }
+
+const attrValue = (id: string) => id.replace(/["\\]/g, "");
 
 /** Règles CSS qui appliquent la feuille de styles à l'éditeur. */
 export function stylesToCss(sheet: StyleSheet, scope = "#editor .tiptap") {
@@ -111,13 +156,18 @@ export function stylesToCss(sheet: StyleSheet, scope = "#editor .tiptap") {
     `${scope} h2 { ${declarations(sheet, "heading1")} }`,
     `${scope} h3 { ${declarations(sheet, "heading2")} }`,
     `${scope} h4 { ${declarations(sheet, "heading3")} }`,
+    ...sheet.custom.map((c) =>
+      c.kind === "paragraph"
+        ? `${scope} p[data-custom-style="${attrValue(c.id)}"] { ${declarations(sheet, customRef(c.id))} }`
+        : `${scope} span[data-char-style="${attrValue(c.id)}"] { ${declarations(sheet, customRef(c.id))} }`,
+    ),
     // Le premier bloc de la page ne commence pas par un espace.
     `${scope} > :first-child { margin-top: 0; }`,
   ].join("\n");
 }
 
-/** Aperçu d'un style dans la liste de la fenêtre « Styles ». */
-export function previewCss(sheet: StyleSheet, key: StyleKey) {
-  const s = sheet[key];
-  return `font-family: ${cssFont(fontOf(sheet, key))}, Georgia, serif; font-size: ${Math.min(s.fontSize, 20)}pt; font-weight: ${s.bold ? "bold" : "normal"}; font-style: ${s.italic ? "italic" : "normal"}; color: ${s.color || "#000000"};`;
+/** Aperçu d'un style dans les listes de styles. */
+export function previewCss(sheet: StyleSheet, ref: StyleRef) {
+  const s = getStyle(sheet, ref);
+  return `font-family: ${cssFont(fontOf(sheet, ref))}, Georgia, serif; font-size: ${Math.min(s.fontSize, 20)}pt; font-weight: ${s.bold ? "bold" : "normal"}; font-style: ${s.italic ? "italic" : "normal"}; color: ${s.color || "#000000"};`;
 }
