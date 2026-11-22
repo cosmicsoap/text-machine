@@ -150,6 +150,8 @@ fn table_to_markdown(rows: &[Block]) -> String {
                                 .filter_map(block_to_markdown)
                                 .collect::<Vec<_>>()
                                 .join("<br>")
+                                // Un retour à la ligne forcé reste dans la cellule.
+                                .replace("\\\n", "<br>")
                                 .replace('\n', " ")
                                 .replace('|', "\\|")
                         }
@@ -164,12 +166,31 @@ fn table_to_markdown(rows: &[Block]) -> String {
     if cols == 0 {
         return String::new();
     }
+    // Colonnes alignées : le tableau reste lisible même ouvert comme
+    // simple texte (Aperçu, TextEdit…).
+    let width = |s: &str| s.chars().count();
+    let widths: Vec<usize> = (0..cols)
+        .map(|c| {
+            cells
+                .iter()
+                .filter_map(|r| r.get(c))
+                .map(|s| width(s))
+                .max()
+                .unwrap_or(0)
+                .max(3)
+        })
+        .collect();
     let line = |row: &[String]| {
-        let mut parts: Vec<&str> = row.iter().map(String::as_str).collect();
-        parts.resize(cols, "");
+        let parts: Vec<String> = (0..cols)
+            .map(|c| {
+                let text = row.get(c).map(String::as_str).unwrap_or("");
+                format!("{text}{}", " ".repeat(widths[c] - width(text)))
+            })
+            .collect();
         format!("| {} |", parts.join(" | "))
     };
-    let mut out = vec![line(&cells[0]), format!("|{}", " --- |".repeat(cols))];
+    let rule: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
+    let mut out = vec![line(&cells[0]), format!("| {} |", rule.join(" | "))];
     out.extend(cells[1..].iter().map(|r| line(r)));
     out.join("\n")
 }
@@ -526,6 +547,11 @@ impl Builder {
             },
             Event::Text(text) => self.push_text(&text, None),
             Event::Code(code) => self.push_text(&code, Some(Mark::Code)),
+            Event::InlineHtml(html)
+                if matches!(html.trim().to_ascii_lowercase().as_str(), "<br>" | "<br/>" | "<br />") =>
+            {
+                self.push_inline(Inline::HardBreak)
+            }
             Event::Html(html) | Event::InlineHtml(html) => self.push_text(&html, None),
             Event::SoftBreak => self.push_text(" ", None),
             Event::HardBreak => self.push_inline(Inline::HardBreak),
@@ -603,7 +629,7 @@ let x = 1;
 
 | Nom | Âge |
 | --- | --- |
-| Ada | 36 |
+| Ada | 36  |
 
 ---
 
@@ -615,6 +641,26 @@ let x = 1;
         let doc = import(SAMPLE);
         let md = export(&doc);
         assert_eq!(md, SAMPLE);
+    }
+
+    #[test]
+    fn tableau_de_l_editeur() {
+        // Tel que l'éditeur l'envoie : cellule vide, retour à la ligne forcé.
+        let json = r#"{"type":"doc","content":[{"type":"table","content":[
+            {"type":"tableRow","content":[
+                {"type":"tableHeader","attrs":{"colspan":1,"rowspan":1,"colwidth":null},"content":[{"type":"paragraph","content":[{"type":"text","text":"Produit"}]}]},
+                {"type":"tableHeader","attrs":{"colspan":1,"rowspan":1,"colwidth":[120]},"content":[{"type":"paragraph"}]}]},
+            {"type":"tableRow","content":[
+                {"type":"tableCell","attrs":{"colspan":1,"rowspan":1,"colwidth":null},"content":[{"type":"paragraph","content":[{"type":"text","text":"a"},{"type":"hardBreak"},{"type":"text","text":"b"}]}]},
+                {"type":"tableCell","attrs":{"colspan":1,"rowspan":1,"colwidth":null},"content":[{"type":"paragraph","content":[{"type":"text","text":"12"}]}]}]}]}]}"#;
+        let doc: Document = serde_json::from_str(json).unwrap();
+        let md = export(&doc);
+        assert_eq!(md, "| Produit | ... |\n| ------- | --- |\n| a<br>b  | 12  |\n".replace("...", "   "));
+        let back = import(&md);
+        let Block::Table { content: rows } = &back.content[0] else { panic!("{back:?}") };
+        assert_eq!(rows.len(), 2);
+        // Le retour à la ligne revient comme tel, pas comme « <br> ».
+        assert_eq!(export(&back), md);
     }
 
     #[test]
