@@ -100,6 +100,23 @@ collez cette commande, puis relancez-la :
 xattr -dr com.apple.quarantine "/Applications/Text Machine.app"
 ```
 
+## Installer l'application sur Windows
+
+1. Téléchargez **[Text-Machine-windows.exe](https://github.com/cosmicsoap/text-machine/releases/latest/download/Text-Machine-windows.exe)**
+   (Windows 10 ou 11, toujours la dernière version).
+2. Double-cliquez sur le fichier téléchargé.
+3. **La première fois**, Windows affiche un écran bleu « Windows a protégé
+   votre ordinateur » (SmartScreen), parce que l'application n'est pas signée
+   (il faut un certificat payant). Cliquez sur **Informations
+   complémentaires**, puis sur **Exécuter quand même**.
+4. L'installation se fait sans mot de passe administrateur. Text Machine
+   apparaît ensuite dans le menu Démarrer.
+
+Sur Windows, les raccourcis utilisent **Ctrl** à la place de **⌘**
+(Ctrl+S pour enregistrer, Ctrl+B pour le gras…). L'export PDF passe par la
+fenêtre d'impression : choisissez « Enregistrer au format PDF » ou
+« Microsoft Print to PDF ».
+
 ## Lancer l'application sur Mac (pour développer)
 
 ### 1. Installer les outils (une seule fois)

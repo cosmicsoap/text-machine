@@ -81,11 +81,17 @@ pub fn system_families() -> Vec<String> {
         PathBuf::from("/System/Library/Fonts"),
         PathBuf::from("/Library/Fonts"),
         PathBuf::from("/usr/share/fonts"),
-        PathBuf::from("C:\\Windows\\Fonts"),
     ];
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(Path::new(&home).join("Library/Fonts"));
         dirs.push(Path::new(&home).join(".local/share/fonts"));
+    }
+    // Windows : polices de tout l'ordinateur, puis celles installées
+    // « pour moi seulement » (Windows 10 et plus récent).
+    let windir = std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into());
+    dirs.push(Path::new(&windir).join("Fonts"));
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        dirs.push(Path::new(&local).join("Microsoft").join("Windows").join("Fonts"));
     }
     let mut files = Vec::new();
     for dir in dirs {

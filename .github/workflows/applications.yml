@@ -1,0 +1,130 @@
+# Fabrique les applications Mac (.dmg) et Windows (.exe) automatiquement sur
+# les serveurs de GitHub.
+#
+# - À chaque modification de la branche main : les deux fichiers sont publiés
+#   dans la page « Releases » du dépôt, sous le nom « Dernière version ».
+# - Sur une pull request : ils sont seulement fabriqués (pour vérifier que
+#   tout marche) et rangés dans l'onglet « Actions ».
+# - On peut aussi relancer à la main : onglet Actions > « Applications »
+#   > « Run workflow ».
+name: Applications
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: applications-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    name: Mac (.dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # Une seule application qui marche sur les Mac Apple (M1, M2…) et Intel.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Installer les dépendances web
+        working-directory: app
+        run: npm ci
+
+      - name: Fabriquer l'application
+        working-directory: app
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Renommer le .dmg
+        run: |
+          dmg=$(find target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' | head -n 1)
+          test -n "$dmg"
+          mv "$dmg" Text-Machine-mac.dmg
+          ls -lh Text-Machine-mac.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Text-Machine-mac
+          path: Text-Machine-mac.dmg
+
+  windows:
+    name: Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Installer les dépendances web
+        working-directory: app
+        run: npm ci
+
+      # Installateur NSIS : un seul .exe, qui installe sans droits
+      # d'administrateur et ajoute Text Machine au menu Démarrer.
+      - name: Fabriquer l'application
+        working-directory: app
+        run: npx tauri build --bundles nsis
+
+      - name: Renommer l'installateur
+        shell: bash
+        run: |
+          exe=$(find target/release/bundle/nsis -name '*.exe' | head -n 1)
+          test -n "$exe"
+          mv "$exe" Text-Machine-windows.exe
+          ls -lh Text-Machine-windows.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Text-Machine-windows
+          path: Text-Machine-windows.exe
+
+  publier:
+    name: Publier dans « Releases »
+    needs: [mac, windows]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Remplacer « Dernière version »
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -lh
+          gh release delete derniere-version --yes --cleanup-tag || true
+          gh release create derniere-version Text-Machine-mac.dmg Text-Machine-windows.exe \
+            --target "$GITHUB_SHA" \
+            --title "Dernière version" \
+            --latest \
+            --notes "Applications fabriquées automatiquement à partir du commit ${GITHUB_SHA::7}.
+
+          - **Mac** : Text-Machine-mac.dmg (Mac Apple M1, M2… et Intel, macOS 11 ou plus récent).
+          - **Windows** : Text-Machine-windows.exe (Windows 10 ou 11).
+
+          Les applications ne sont pas signées : la première fois, macOS ou Windows avertit avant de les ouvrir. Voir « Installer l'application » dans le README."
