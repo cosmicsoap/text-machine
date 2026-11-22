@@ -157,6 +157,9 @@ fn table_to_markdown(rows: &[Block]) -> String {
                         }
                         _ => String::new(),
                     })
+                    // Une cellule vide garde une espace insécable : certains
+                    // éditeurs (Typora) ne voient pas un tableau à l'en-tête vide.
+                    .map(|text| if text.is_empty() { "&nbsp;".to_string() } else { text })
                     .collect(),
             ),
             _ => None,
@@ -382,6 +385,13 @@ impl Builder {
             Container::Table => Block::Table { content },
             Container::Row { .. } => Block::TableRow { content },
             Container::Cell { header } => {
+                // « &nbsp; » seul : une cellule vide (voir table_to_markdown).
+                let content: Vec<Block> = content
+                    .into_iter()
+                    .filter(|b| !matches!(b, Block::Paragraph { content, .. }
+                        if content.iter().all(|i| matches!(i, Inline::Text { text, .. }
+                            if text.trim_matches(|c: char| c == '\u{a0}' || c.is_whitespace()).is_empty()))))
+                    .collect();
                 let content = non_empty(content);
                 if header {
                     Block::TableHeader {
@@ -655,7 +665,7 @@ let x = 1;
                 {"type":"tableCell","attrs":{"colspan":1,"rowspan":1,"colwidth":null},"content":[{"type":"paragraph","content":[{"type":"text","text":"12"}]}]}]}]}]}"#;
         let doc: Document = serde_json::from_str(json).unwrap();
         let md = export(&doc);
-        assert_eq!(md, "| Produit | ... |\n| ------- | --- |\n| a<br>b  | 12  |\n".replace("...", "   "));
+        assert_eq!(md, "| Produit | &nbsp; |\n| ------- | ------ |\n| a<br>b  | 12     |\n");
         let back = import(&md);
         let Block::Table { content: rows } = &back.content[0] else { panic!("{back:?}") };
         assert_eq!(rows.len(), 2);
