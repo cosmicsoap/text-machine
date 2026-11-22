@@ -324,6 +324,43 @@ pub enum Mark {
         #[serde(default)]
         attrs: ChangeAttrs,
     },
+    /// Commentaire dans la marge sur ce texte. Chaque morceau du texte
+    /// commenté porte toute la discussion (même `id`).
+    Comment {
+        #[serde(default)]
+        attrs: CommentAttrs,
+    },
+}
+
+/// Une discussion dans la marge : le commentaire, ses réponses, et s'il est
+/// résolu (il reste dans le fichier mais n'est plus affiché).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CommentAttrs {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub author: String,
+    /// Date ISO 8601.
+    #[serde(default)]
+    pub date: String,
+    /// Texte du commentaire (`\n` sépare les paragraphes).
+    #[serde(default)]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replies: Vec<CommentReply>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub resolved: bool,
+}
+
+/// Une réponse dans une discussion.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CommentReply {
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub date: String,
+    #[serde(default)]
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1065,5 +1102,26 @@ mod tests {
         assert_eq!(back, original);
         // La note ne compte pas dans le texte.
         assert_eq!(doc.plain_text(), "\nTexteajoutretrait\n");
+    }
+
+    #[test]
+    fn lit_un_commentaire_de_l_editeur() {
+        let json = r#"{"type":"doc","content":[{"type":"paragraph","content":[
+            {"type":"text","text":"mot","marks":[{"type":"comment","attrs":{"id":"c1","author":"Moi",
+            "date":"2026-11-22T10:00:00Z","text":"À revoir","replies":[{"author":"Bob","date":"","text":"Oui"}],
+            "resolved":false}}]}]}]}"#;
+        let doc: Document = serde_json::from_str(json).unwrap();
+        let Block::Paragraph { content, .. } = &doc.content[0] else {
+            panic!()
+        };
+        let Inline::Text { marks, .. } = &content[0] else {
+            panic!()
+        };
+        let Mark::Comment { attrs } = &marks[0] else {
+            panic!()
+        };
+        assert_eq!(attrs.text, "À revoir");
+        assert_eq!(attrs.replies[0].author, "Bob");
+        assert_eq!(doc.plain_text().trim(), "mot");
     }
 }

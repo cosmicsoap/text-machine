@@ -2083,3 +2083,437 @@ body.clean-current #editor ins.suggest-ins,
 body.clean-current .legend {
   display: none;
 }
+
+/* --- Commentaires dans la marge ------------------------------------------------------ */
+
+#editor .tiptap .comment-mark:not([data-resolved]) {
+  background: rgb(251 188 4 / 0.28);
+  border-bottom: 2px solid rgb(251 188 4 / 0.75);
+}
+
+#editor .tiptap .comment-mark.comment-active,
+#editor .tiptap .comment-mark .comment-active,
+#editor .tiptap .comment-active {
+  background: rgb(251 188 4 / 0.55);
+}
+
+#editor .tiptap .comment-pending {
+  background: rgb(251 188 4 / 0.45);
+}
+
+/* Avec des commentaires, la page se décale à gauche pour laisser la marge. */
+body:not(.comparing):not(.focus-mode):not(.exporting) .desk.with-comments {
+  padding-right: calc(var(--rail-space, 300px) + 16px);
+}
+
+.comment-rail {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 20px);
+  width: 280px;
+  height: 100%;
+  pointer-events: none;
+}
+
+body.comparing .comment-rail,
+body.focus-mode .comment-rail {
+  display: none;
+}
+
+.comment-card,
+.comment-add {
+  pointer-events: auto;
+}
+
+.comment-add {
+  position: absolute;
+  /* Dans la marge droite de la page (position réglée par comments.ts). */
+  left: -66px;
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--page);
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow:
+    0 1px 3px 1px rgb(60 64 67 / 0.15),
+    0 1px 2px rgb(60 64 67 / 0.3);
+}
+
+.comment-add:hover {
+  background: #e8f0fe;
+}
+
+.comment-add[hidden] {
+  display: none;
+}
+
+.comment-card {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8f9fb;
+  border: 1px solid #e3e6ea;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: default;
+  transition:
+    top 0.15s ease,
+    left 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.comment-card:hover {
+  box-shadow: 0 1px 3px rgb(60 64 67 / 0.15);
+}
+
+.comment-card.active {
+  left: -14px;
+  background: var(--page);
+  border-color: transparent;
+  box-shadow:
+    0 1px 3px 1px rgb(60 64 67 / 0.15),
+    0 1px 2px rgb(60 64 67 / 0.3);
+  z-index: 2;
+}
+
+.comment-card.resolved {
+  opacity: 0.75;
+}
+
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comment-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.comment-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.comment-author {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.comment-icon {
+  flex-shrink: 0;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.comment-icon .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.comment-icon:hover {
+  background: var(--hover);
+}
+
+.comment-icon.reopen {
+  border-radius: 14px;
+  padding: 0 10px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.comment-text {
+  margin: 8px 0 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.comment-reply {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eceef1;
+}
+
+.comment-reply .comment-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+.comment-input {
+  margin-top: 8px;
+}
+
+.comment-input textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  font: inherit;
+  line-height: 1.4;
+  background: var(--page);
+  outline: none;
+}
+
+.comment-input textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* La zone « Répondre » n'apparaît que sur la carte choisie. */
+.comment-card:not(.active) .reply-box {
+  display: none;
+}
+
+.comment-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.comment-buttons[hidden] {
+  display: none;
+}
+
+.comment-buttons button {
+  padding: 6px 14px;
+  border-radius: 16px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.comment-buttons button:hover {
+  background: #e8f0fe;
+}
+
+.comment-buttons .comment-ok {
+  background: var(--accent);
+  color: white;
+}
+
+.comment-buttons .comment-ok:hover {
+  background: #0842a0;
+}
+
+.comment-buttons .comment-ok:disabled {
+  background: #e3e3e3;
+  color: #9aa0a6;
+  cursor: default;
+}
+
+body.exporting #editor .tiptap .comment-mark,
+body.exporting #editor .tiptap .comment-active {
+  background: none !important;
+  border: 0 !important;
+}
+
+body.exporting .comment-rail {
+  display: none !important;
+}
+
+@media print {
+  .comment-rail {
+    display: none !important;
+  }
+
+  #editor .tiptap .comment-mark,
+  #editor .tiptap .comment-active {
+    background: none !important;
+    border: 0 !important;
+  }
+
+  .desk.with-comments {
+    padding-right: 0 !important;
+  }
+}
+
+/* --- Mode sans distraction ------------------------------------------------------------ */
+
+body.focus-mode {
+  --focus-bg: #ffffff;
+  --focus-ink: inherit;
+}
+
+body.focus-mode.focus-sepia {
+  --focus-bg: #f5efe2;
+  --focus-ink: #3b3326;
+}
+
+body.focus-mode.focus-dark {
+  --focus-bg: #1f2023;
+  --focus-ink: #d9d6cf;
+}
+
+body.focus-mode {
+  background: var(--focus-bg);
+}
+
+body.focus-mode :is(.app-header, .side-panel, .panel-show, .find-bar, .word-box, .change-bubble) {
+  display: none !important;
+}
+
+body.focus-mode .desk {
+  padding: 8vh 16px 45vh;
+  background: var(--focus-bg);
+  scrollbar-width: thin;
+}
+
+/* Une colonne de texte au centre, sans feuille ni ombre. */
+body.focus-mode .paper {
+  --m-left: 0px !important;
+  --m-right: 0px !important;
+  --m-top: 0px !important;
+  width: min(720px, 100%);
+  zoom: 1.1 !important;
+}
+
+body.focus-mode .sheet {
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+body.focus-mode :is(.page-number, .margins-layer) {
+  display: none;
+}
+
+body.focus-mode.focus-sepia #editor .tiptap :is(p, h1, h2, h3, h4, li, blockquote, td, th, pre),
+body.focus-mode.focus-dark #editor .tiptap :is(p, h1, h2, h3, h4, li, blockquote, td, th, pre) {
+  color: var(--focus-ink) !important;
+}
+
+body.focus-mode.focus-dark #editor .tiptap {
+  caret-color: #e8e6e3;
+}
+
+body.focus-mode.focus-dark #editor .tiptap ::selection {
+  background: rgb(120 160 255 / 0.35);
+}
+
+/* Paragraphe en cours : les autres s'estompent. */
+body.focus-paragraph #editor .tiptap :is(p, h1, h2, h3, h4, pre) {
+  opacity: 0.28;
+  transition: opacity 0.2s ease;
+}
+
+body.focus-paragraph #editor .tiptap :is(p, h1, h2, h3, h4, pre).is-current {
+  opacity: 1;
+}
+
+.focus-bar {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 10px 8px 18px;
+  border-radius: 0 0 12px 12px;
+  background: rgb(255 255 255 / 0.96);
+  color: var(--ink-soft);
+  font-size: 13px;
+  box-shadow: 0 1px 6px rgb(60 64 67 / 0.2);
+  transform: translate(-50%, -110%);
+  transition: transform 0.2s ease;
+}
+
+body.focus-mode .focus-bar {
+  display: flex;
+}
+
+body.focus-mode .focus-bar.shown {
+  transform: translate(-50%, 0);
+}
+
+body.focus-mode.focus-dark .focus-bar {
+  background: rgb(48 49 53 / 0.96);
+  color: #d9d6cf;
+}
+
+.focus-bar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.focus-bar select {
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+
+.focus-words {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.focus-exit {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.focus-exit kbd {
+  margin-left: 4px;
+  font: inherit;
+  color: inherit;
+  opacity: 0.75;
+}
+
+body.focus-mode #editor .tiptap :is(.comment-mark, .comment-active) {
+  background: none !important;
+  border: 0 !important;
+}

@@ -44,6 +44,11 @@ export const ICONS: Record<string, string> = {
   panel: svg('<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15"/>'),
   back: svg('<path d="M19 12H5M11 6l-6 6 6 6"/>'),
   close: svg('<path d="m6 6 12 12M18 6 6 18"/>'),
+  comment: svg('<path d="M4.5 5.5h15v10.5H10l-4 3.5v-3.5H4.5z"/>'),
+  commentAdd: svg('<path d="M4.5 5.5h15v10.5H10l-4 3.5v-3.5H4.5z"/><path d="M12 8.2v5.1M9.45 10.75h5.1"/>'),
+  check: svg('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
+  fullscreen: svg('<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>'),
+  focus: svg('<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8.5 9h7M8.5 12h7M8.5 15h4.5"/>'),
   // Logo de Text Machine (volontairement différent de celui de Google Docs).
   doc: '<svg class="doc-icon" viewBox="0 0 32 40" aria-hidden="true"><rect x="1" y="1" width="30" height="38" rx="5" fill="#1d6b63"/><path d="M8 11h16M16 11v18" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/><path d="M11 33h10" stroke="#8fd5c8" stroke-width="2.4" stroke-linecap="round"/></svg>',
   cloud: svg('<path d="M7.5 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.4 1.6 3.8 3.8 0 0 1-.8 7.4z"/><path d="m9.5 13.5 2 2 3.5-3.5"/>'),

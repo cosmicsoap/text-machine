@@ -22,7 +22,7 @@ fn zip_err(e: impl std::fmt::Display) -> DocxError {
 }
 
 /// Les fichiers du paquet `.docx`, dans l'ordre.
-fn read_parts(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DocxError> {
+pub(crate) fn read_parts(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DocxError> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(zip_err)?;
     let mut parts = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
@@ -34,7 +34,7 @@ fn read_parts(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DocxError> {
     Ok(parts)
 }
 
-fn write_parts(parts: &[(String, Vec<u8>)]) -> Result<Vec<u8>, DocxError> {
+pub(crate) fn write_parts(parts: &[(String, Vec<u8>)]) -> Result<Vec<u8>, DocxError> {
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -103,7 +103,7 @@ pub(crate) fn extract_notes(bytes: &[u8]) -> Result<(Vec<u8>, HashMap<String, St
     Ok((write_parts(&parts)?, notes))
 }
 
-fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     let i = tag.find(&format!("{name}=\""))? + name.len() + 2;
     let len = tag[i..].find('"')?;
     Some(&tag[i..i + len])
