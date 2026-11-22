@@ -86,12 +86,13 @@ fn export_document(path: String, doc: Document, page: PageSetup) -> Result<(), S
 
 /// Enregistre la page affichée en PDF, sans passer par l'impression.
 #[tauri::command]
-fn export_pdf(
+async fn export_pdf(
     window: tauri::WebviewWindow,
     path: String,
     page: PageSetup,
+    pages: u32,
 ) -> Result<(), String> {
-    pdf::export(&window, &path, &page)
+    pdf::export(&window, &path, &page, pages).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

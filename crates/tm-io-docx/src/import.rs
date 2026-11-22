@@ -53,6 +53,8 @@ enum Item {
     Block(Block),
     ListPara { num: u64, level: usize, ordered: bool, para: Block },
     Task { checked: bool, para: Block },
+    /// Paragraphe de citation (trait à gauche).
+    Quote(Block),
 }
 
 impl Reader {
@@ -161,6 +163,15 @@ impl Reader {
             }
         }
         let heading = prop["style"].as_str().and_then(|s| self.headings.get(s)).copied();
+        // Une citation : trait à gauche, sans numérotation ni titre.
+        let quote = numbering.is_none()
+            && heading.is_none()
+            && prop["borders"]["left"]["val"]
+                .as_str()
+                .is_some_and(|v| !matches!(v, "nil" | "none"));
+        if quote {
+            style.indent = style.indent.and_then(|n| n.checked_sub(1)).filter(|n| *n > 0);
+        }
 
         // Le texte, découpé aux images et aux sauts de page (qui sont des blocs).
         let mut pieces: Vec<Piece> = Vec::new();
@@ -217,6 +228,7 @@ impl Reader {
                                 .is_some_and(|f| f != "bullet" && f != "none");
                             Item::ListPara { num, level, ordered, para }
                         }
+                        _ if quote => Item::Quote(unquote_color(para)),
                         _ => Item::Block(para),
                     };
                     out.push(item);
@@ -487,6 +499,37 @@ fn strip_indent(block: Block) -> Block {
     }
 }
 
+/// Le gris des citations vient de la citation, pas du texte : on l'enlève.
+fn unquote_color(block: Block) -> Block {
+    match block {
+        Block::Paragraph { attrs, content } => Block::Paragraph {
+            attrs,
+            content: content
+                .into_iter()
+                .map(|i| match i {
+                    Inline::Text { text, marks } => Inline::Text {
+                        text,
+                        marks: marks
+                            .into_iter()
+                            .filter_map(|m| match m {
+                                Mark::TextStyle { mut attrs } => {
+                                    if attrs.color.as_deref() == Some("#5f6670") {
+                                        attrs.color = None;
+                                    }
+                                    (attrs != TextStyleAttrs::default()).then_some(Mark::TextStyle { attrs })
+                                }
+                                other => Some(other),
+                            })
+                            .collect(),
+                    },
+                    other => other,
+                })
+                .collect(),
+        },
+        other => other,
+    }
+}
+
 fn unbold(block: Block) -> Block {
     match block {
         Block::Paragraph { attrs, content } => Block::Paragraph {
@@ -514,6 +557,15 @@ fn group_lists(items: Vec<Item>) -> Vec<Block> {
     while let Some(item) = iter.next() {
         match item {
             Item::Block(b) => out.push(b),
+            Item::Quote(para) => {
+                let mut content = vec![para];
+                while let Some(Item::Quote(_)) = iter.peek() {
+                    if let Some(Item::Quote(para)) = iter.next() {
+                        content.push(para);
+                    }
+                }
+                out.push(Block::Blockquote { content });
+            }
             Item::Task { checked, para } => {
                 let mut content = vec![task_item(checked, para)];
                 while let Some(Item::Task { .. }) = iter.peek() {

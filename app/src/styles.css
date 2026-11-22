@@ -595,6 +595,11 @@ dialog label.inline {
     box-shadow: none;
   }
 
+  #editor .tiptap th {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
   .search-match {
     background: none;
   }
@@ -637,8 +642,48 @@ dialog label.inline {
   }
 }
 
+/* Export PDF (voir pdf.rs) : WebKit dessine les feuilles telles qu'à
+   l'écran, mais seules, collées en haut à gauche, sans espace entre elles. */
+html:has(body.exporting),
+body.exporting {
+  display: block;
+  height: auto;
+  overflow: visible;
+  background: white;
+}
+
+body.exporting :is(.toolbar, .status, .outline, .find-bar, dialog) {
+  display: none !important;
+}
+
+body.exporting :is(.workspace, .desk) {
+  display: block;
+  overflow: visible;
+  padding: 0;
+  background: white;
+}
+
+body.exporting .paper {
+  --page-gap: 0px !important;
+  margin: 0;
+}
+
+body.exporting .sheet {
+  box-shadow: none;
+}
+
 body.exporting #editor .tiptap {
   caret-color: transparent;
+}
+
+body.exporting :is(.search-match) {
+  background: none;
+}
+
+body.exporting #editor .tiptap .selectedCell::after,
+body.exporting .column-resize-handle,
+body.exporting .ProseMirror-gapcursor {
+  display: none;
 }
 
 .menu hr {
