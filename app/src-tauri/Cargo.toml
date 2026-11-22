@@ -23,6 +23,7 @@ tm-io-native.workspace = true
 tm-io-markdown.workspace = true
 tm-io-docx.workspace = true
 base64 = "0.23"
+ttf-parser = "0.25"
 
 
 # Export PDF direct sur Mac (mêmes versions que celles de Tauri).
