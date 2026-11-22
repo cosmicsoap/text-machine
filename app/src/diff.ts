@@ -52,6 +52,8 @@ export function tokenize(doc: PMNode): Token[] {
 function diffIndices(a: string[], b: string[], maxEdits = 1500) {
   const removed: number[] = [];
   const added: number[] = [];
+  /** Pour chaque différence : l'indice du jeton de `b` où elle se trouve. */
+  const anchors: number[] = [];
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   let endA = a.length;
@@ -65,7 +67,8 @@ function diffIndices(a: string[], b: string[], maxEdits = 1500) {
   const markAll = () => {
     for (let i = start; i < endA; i++) removed.push(i);
     for (let j = start; j < endB; j++) added.push(j);
-    return { removed, added };
+    anchors.push(start);
+    return { removed, added, anchors };
   };
   if (n === 0 || m === 0) return markAll();
 
@@ -112,10 +115,11 @@ function diffIndices(a: string[], b: string[], maxEdits = 1500) {
     }
     if (x === prevX) added.push(start + prevY);
     else removed.push(start + prevX);
+    anchors.push(start + prevY);
     x = prevX;
     y = prevY;
   }
-  return { removed, added };
+  return { removed, added, anchors };
 }
 
 /** Réunit les jetons voisins en plages. */
@@ -135,13 +139,47 @@ function ranges(tokens: Token[], indices: number[]): DiffRange[] {
 export function compareDocs(before: PMNode, after: PMNode) {
   const a = tokenize(before);
   const b = tokenize(after);
-  const { removed, added } = diffIndices(
+  const { removed, added, anchors } = diffIndices(
     a.map((t) => t.text),
     b.map((t) => t.text),
   );
+  // Endroits des différences dans le texte en cours (pour aller de l'une à
+  // l'autre), une seule fois par paquet de jetons voisins.
+  const end = after.content.size;
+  const sorted = [...new Set(anchors)].sort((p, q) => p - q);
+  const places: number[] = [];
+  sorted.forEach((idx, k) => {
+    if (k > 0 && idx - sorted[k - 1] <= 1) return;
+    places.push(idx < b.length ? b[idx].from : end);
+  });
   return {
     removed: ranges(a, removed),
     added: ranges(b, added),
-    changes: removed.length + added.length,
+    changes: places.length,
+    places,
   };
+}
+
+export interface Stats {
+  words: number;
+  characters: number;
+}
+
+/**
+ * Mots et signes (espaces compris), comme Outils > Nombre de mots. Le texte
+ * barré d'une suggestion ne compte pas : il est en passe d'être retiré.
+ */
+export function docStats(doc: PMNode): Stats {
+  let text = "";
+  doc.descendants((node) => {
+    if (node.isText) {
+      if (!node.marks.some((m) => m.type.name === "deletion")) text += node.text;
+      return false;
+    }
+    if (node.isBlock && text && !text.endsWith("\n")) text += "\n";
+    return true;
+  });
+  const words = text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+  const characters = [...text].filter((c) => c !== "\n").length;
+  return { words, characters };
 }

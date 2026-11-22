@@ -125,6 +125,7 @@
         <div class="compare-head">
           <span class="compare-label">Version d'origine</span>
           <select id="compare-select" title="Version comparée"></select>
+          <span id="stats-before" class="compare-stats"></span>
           <span class="spacer"></span>
           <button type="button" id="compare-restore" class="text" title="Remplacer le texte en cours par cette version">Restaurer</button>
           <button type="button" id="compare-close" data-icon="close" title="Fermer la comparaison"></button>
@@ -141,8 +142,11 @@
         <div class="desk-head">
           <span class="compare-label">En cours de correction</span>
           <span class="legend"><span class="legend-del">retiré</span> <span class="legend-ins">ajouté</span></span>
+          <span id="stats-after" class="compare-stats"></span>
           <span class="spacer"></span>
           <span id="compare-count" class="compare-count"></span>
+          <button type="button" class="diff-nav" id="diff-prev" title="Différence précédente">↑</button>
+          <button type="button" class="diff-nav" id="diff-next" title="Différence suivante">↓</button>
         </div>
         <div class="paper" id="paper">
           <div class="sheets" id="sheets" aria-hidden="true"></div>

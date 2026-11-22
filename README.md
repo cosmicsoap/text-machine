@@ -69,7 +69,15 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 >   puis on corrige ; la version figée s'affiche à gauche, le texte en cours à
 >   droite, et les différences sont surlignées pendant la frappe (rouge :
 >   retiré, vert : ajouté). On peut aussi comparer avec un autre fichier, et
->   restaurer une version. Les versions sont gardées par Text Machine (pas
+>   restaurer une version. Chaque côté affiche ses mots et signes (avec
+>   l'écart), et ↑ ↓ mènent d'une différence à l'autre.
+> - **Niveaux de révision** (Outils > Suggestions, comme Scrivener) : cinq
+>   couleurs, pour distinguer les passes de correction ; on accepte ou
+>   refuse un niveau entier. Dans Word, le niveau est ajouté au nom de
+>   l'auteur (« Moi · révision 2 »).
+> - **Réorganiser les onglets** par glisser-déposer dans le panneau de
+>   gauche (en haut d'une ligne : avant ; en bas : après ; au milieu : comme
+>   sous-onglet). L'ordre du document exporté suit. Les versions sont gardées par Text Machine (pas
 >   dans le fichier Word), et suivent le document s'il est renommé avec
 >   « Enregistrer sous ».
 
