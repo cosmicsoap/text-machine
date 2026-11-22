@@ -128,3 +128,14 @@ jobs:
           - **Windows** : Text-Machine-windows.exe (Windows 10 ou 11).
 
           Les applications ne sont pas signées : la première fois, macOS ou Windows avertit avant de les ouvrir. Voir « Installer l'application » dans le README."
+
+          # « gh release create » peut laisser la version en brouillon (alors
+          # invisible et les liens de téléchargement ne marchent plus) :
+          # on la publie explicitement, puis on vérifie.
+          for i in 1 2 3 4 5; do
+            gh release edit derniere-version --draft=false --latest && break
+            sleep 5
+          done
+          test "$(gh release view derniere-version --json isDraft -q .isDraft)" = "false"
+          curl -fsIL -o /dev/null "https://github.com/$GH_REPO/releases/latest/download/Text-Machine-windows.exe"
+          curl -fsIL -o /dev/null "https://github.com/$GH_REPO/releases/latest/download/Text-Machine-mac.dmg"
