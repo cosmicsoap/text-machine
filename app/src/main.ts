@@ -57,6 +57,7 @@ import { ICONS } from "./icons";
 import { SEP, closeMenus, popup, setupMenubar, type MenuItem } from "./menus";
 import { invoke } from "@tauri-apps/api/core";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
+import { localizeShortcutTitles } from "./platform";
 
 /** Formats que l'application ouvre et enregistre directement. */
 const OPEN_FILTERS = [
@@ -1789,6 +1790,9 @@ function refreshToolbar() {
 
 window.addEventListener("keydown", (event) => {
   if (!(event.metaKey || event.ctrlKey)) return;
+  // Sous Windows, AltGr compte comme Ctrl+Alt : AltGr+0 (@), AltGr+3 (#)…
+  // doivent écrire le caractère, pas changer de style.
+  if (event.getModifierState("AltGraph")) return;
   const key = event.key.toLowerCase();
   // ⌘⌥0 : texte normal ; ⌘⌥1 à 3 : titres 1 à 3 (comme Google Docs).
   if (event.altKey && /^Digit[0-4]$/.test(event.code)) {
@@ -1849,6 +1853,7 @@ window.addEventListener("keydown", (event) => {
 // --- Démarrage -----------------------------------------------------------------------
 
 tabs.load([{ title: "Onglet 1", document: editor.getJSON() }]);
+localizeShortcutTitles();
 setStyles(styles, false);
 applyPageSetup();
 setZoom(zoom);

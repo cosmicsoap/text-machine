@@ -2,6 +2,8 @@
 // façon de Google Docs. Les menus sont recréés à chaque ouverture : les
 // coches et les listes (fichiers récents…) sont toujours à jour.
 
+import { shortcutLabel } from "./platform";
+
 export interface MenuItem {
   label?: string;
   shortcut?: string;
@@ -48,7 +50,7 @@ function render(items: MenuItem[]): HTMLElement {
     label.textContent = item.label ?? "";
     const right = document.createElement("span");
     right.className = "shortcut";
-    right.textContent = item.submenu ? "›" : (item.shortcut ?? "");
+    right.textContent = item.submenu ? "›" : item.shortcut ? shortcutLabel(item.shortcut) : "";
     row.append(check, label, right);
     if (item.submenu) {
       const wrap = document.createElement("div");
