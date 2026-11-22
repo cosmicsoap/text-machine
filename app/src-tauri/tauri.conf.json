@@ -47,7 +47,36 @@
         ],
         "displayLanguageSelector": false
       }
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "docx"
+        ],
+        "name": "Document Word",
+        "description": "Document Word",
+        "role": "Editor",
+        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "contentTypes": [
+          "org.openxmlformats.wordprocessingml.document"
+        ],
+        "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "md",
+          "markdown"
+        ],
+        "name": "Document Markdown",
+        "description": "Document Markdown",
+        "role": "Editor",
+        "mimeType": "text/markdown",
+        "contentTypes": [
+          "net.daringfireball.markdown"
+        ],
+        "rank": "Default"
+      }
+    ]
   },
   "plugins": {
     "updater": {

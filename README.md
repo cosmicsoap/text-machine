@@ -119,6 +119,12 @@ xattr -dr com.apple.quarantine "/Applications/Text Machine.app"
 4. L'installation se fait sans mot de passe administrateur. Text Machine
    apparaît ensuite dans le menu Démarrer.
 
+Text Machine sait ouvrir les fichiers **.docx** et **.md** d'un double-clic.
+Pour qu'il soit l'application par défaut : clic droit sur un fichier >
+**Ouvrir avec** > **Choisir une autre application** > **Text Machine** >
+**Toujours** (sur Mac : clic droit > **Lire les informations** > « Ouvrir
+avec » > Text Machine > **Tout modifier…**).
+
 Sur Windows, les raccourcis utilisent **Ctrl** à la place de **⌘**
 (Ctrl+S pour enregistrer, Ctrl+B pour le gras…).
 
