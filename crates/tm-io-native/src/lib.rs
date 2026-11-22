@@ -7,13 +7,15 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tm_model::{Document, PageSetup};
+use tm_model::{flatten_tabs, split_tabs, Document, PageSetup, StyleSheet, Tab};
 
 /// Extension de fichier (provisoire).
 pub const EXTENSION: &str = "tmd";
 
 /// Version du format écrite par cette version de l'application.
-pub const FORMAT_VERSION: u32 = 1;
+/// Version 2 : onglets et feuille de styles (les fichiers en version 1,
+/// avec un seul `document`, s'ouvrent toujours).
+pub const FORMAT_VERSION: u32 = 2;
 
 const FORMAT_NAME: &str = "text-machine";
 
@@ -29,21 +31,76 @@ pub enum NativeError {
     TooNew(u32),
 }
 
-/// Ce que contient un fichier `.tmd` : le document et ses réglages.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+/// Ce que contient un fichier `.tmd` : les onglets du document et ses
+/// réglages (format des pages, styles de paragraphe).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "RawFile", rename_all = "camelCase")]
 pub struct NativeFile {
-    pub document: Document,
-    /// Format des pages (absent des fichiers plus anciens : valeur par défaut).
-    #[serde(default)]
+    /// Toujours au moins un onglet.
+    pub tabs: Vec<Tab>,
     pub page: PageSetup,
+    pub styles: StyleSheet,
+}
+
+/// Lecture tolérante : les anciens fichiers n'ont qu'un `document`, ni
+/// styles, ni format de page.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawFile {
+    #[serde(default)]
+    tabs: Vec<Tab>,
+    #[serde(default)]
+    document: Option<Document>,
+    #[serde(default)]
+    page: PageSetup,
+    #[serde(default)]
+    styles: StyleSheet,
+}
+
+impl From<RawFile> for NativeFile {
+    fn from(raw: RawFile) -> Self {
+        let tabs = if raw.tabs.is_empty() {
+            split_tabs(raw.document.unwrap_or_default())
+        } else {
+            raw.tabs
+        };
+        Self {
+            tabs,
+            page: raw.page,
+            styles: raw.styles,
+        }
+    }
+}
+
+impl Default for NativeFile {
+    fn default() -> Self {
+        Self::new(Document::default())
+    }
 }
 
 impl NativeFile {
+    /// Un document d'un seul onglet.
     pub fn new(document: Document) -> Self {
         Self {
-            document,
+            tabs: split_tabs(document),
             page: PageSetup::default(),
+            styles: StyleSheet::default(),
         }
+    }
+
+    /// Un document lu dans un format sans onglets (Word, Markdown) : il est
+    /// découpé aux titres d'onglet qu'il contient.
+    pub fn from_flat(document: Document, page: PageSetup, styles: StyleSheet) -> Self {
+        Self {
+            tabs: split_tabs(document),
+            page,
+            styles,
+        }
+    }
+
+    /// Tous les onglets à la suite, pour les formats sans onglets.
+    pub fn flattened(&self) -> Document {
+        flatten_tabs(&self.tabs)
     }
 }
 
@@ -112,9 +169,21 @@ mod tests {
 
     #[test]
     fn ouvre_un_fichier_sans_format_de_page() {
-        let file = from_str(r#"{"format":"text-machine","version":1,"document":{"type":"doc"}}"#)
-            .unwrap();
+        let file =
+            from_str(r#"{"format":"text-machine","version":1,"document":{"type":"doc"}}"#).unwrap();
         assert_eq!(file.page, PageSetup::default());
+        assert_eq!(file.tabs.len(), 1);
+    }
+
+    #[test]
+    fn garde_les_onglets_et_les_styles() {
+        let mut file = NativeFile::new(Document::new(vec![Block::paragraph("a")]));
+        let mut sub = Tab::new("Sous-onglet", Document::new(vec![Block::paragraph("b")]));
+        sub.id = "x".into();
+        file.tabs[0].children.push(sub);
+        file.styles.heading1.bold = true;
+        let back = from_str(&to_string(&file).unwrap()).unwrap();
+        assert_eq!(back, file);
     }
 
     #[test]

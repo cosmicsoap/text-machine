@@ -1,8 +1,11 @@
 // Éditeur web : TipTap s'occupe de la saisie et de l'affichage, le cœur
 // Rust (via les commandes Tauri) s'occupe du document, des fichiers et des
 // calculs comme le nombre de mots.
+//
+// L'interface s'inspire de Google Docs : menus, barre d'outils arrondie,
+// panneau des onglets et du plan à gauche, pages au centre.
 
-import { Editor, type JSONContent } from "@tiptap/core";
+import { Editor, createDocument, type JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
@@ -13,6 +16,7 @@ import { TaskList, TaskItem } from "@tiptap/extension-list";
 import { TableKit } from "@tiptap/extension-table";
 import Image from "@tiptap/extension-image";
 import FileHandler from "@tiptap/extension-file-handler";
+import { EditorState, TextSelection } from "@tiptap/pm/state";
 import {
   DEFAULT_PAGE_SETUP,
   PageBreak,
@@ -25,6 +29,22 @@ import {
 } from "./extensions/pagination";
 import { Search, getSearchState } from "./extensions/search";
 import { ParagraphFormat } from "./extensions/paragraph-format";
+import { MAX_TAB_LEVEL, TabTree, type TabData, type TabNode } from "./tabs";
+import {
+  DEFAULT_STYLES,
+  STYLE_KEYS,
+  STYLE_LEVEL,
+  STYLE_NAMES,
+  fontOf,
+  normalizeStyles,
+  previewCss,
+  styleOfLevel,
+  stylesToCss,
+  type StyleKey,
+  type StyleSheet,
+} from "./stylesheet";
+import { ICONS } from "./icons";
+import { SEP, closeMenus, popup, setupMenubar, type MenuItem } from "./menus";
 import { invoke } from "@tauri-apps/api/core";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 
@@ -38,11 +58,43 @@ const SAVE_FILTERS = [
   { name: "Texte brut", extensions: ["txt"] },
 ];
 
+const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
+
+/** Préférences de l'interface (pas du document), gardées par la fenêtre. */
+const prefs = {
+  get(key: string, fallback: string) {
+    try {
+      return localStorage.getItem(`tm.${key}`) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set(key: string, value: string) {
+    try {
+      localStorage.setItem(`tm.${key}`, value);
+    } catch {
+      /* pas grave */
+    }
+  },
+};
+
 let currentPath: string | null = null;
 let pageSetup: PageSetup = structuredClone(DEFAULT_PAGE_SETUP);
+let styles: StyleSheet = structuredClone(DEFAULT_STYLES);
+/** Styles des nouveaux documents (« Enregistrer comme styles par défaut »). */
+let defaultStyles: StyleSheet | null = null;
+/** Pendant un export PDF ou une impression d'un document sans pagination. */
+let forcePaged = false;
+/** Pendant un export PDF : l'éditeur montre un document temporaire. */
+let busy = false;
+
+// Icônes : chaque `data-icon` reçoit son dessin.
+for (const el of document.querySelectorAll<HTMLElement>("[data-icon]")) {
+  el.insertAdjacentHTML("afterbegin", ICONS[el.dataset.icon!] ?? "");
+}
 
 const editor = new Editor({
-  element: document.querySelector<HTMLElement>("#editor")!,
+  element: $("#editor"),
   extensions: [
     StarterKit.configure({
       heading: { levels: [1, 2, 3, 4] },
@@ -61,7 +113,7 @@ const editor = new Editor({
     PageBreak,
     Search,
     Pagination.configure({
-      getSetup: () => pageSetup,
+      getSetup: () => (forcePaged ? { ...pageSetup, pageless: false } : pageSetup),
       onLayout: (pages) => drawSheets(pages),
     }),
     TableKit.configure({ table: { resizable: true } }),
@@ -76,38 +128,71 @@ const editor = new Editor({
       onDrop: (_ed, files, pos) => files.forEach((f) => insertImageFile(f, pos)),
     }),
   ],
-  content: "<h1>Bienvenue dans Text Machine</h1><p>Commencez à écrire ici.</p>",
+  content:
+    "<h1>Bienvenue dans Text Machine</h1><p>Commencez à écrire ici. Les onglets du document sont dans le panneau de gauche.</p>",
   autofocus: "end",
   // Correcteur orthographique du système (macOS), en français.
   editorProps: { attributes: { spellcheck: "true", lang: "fr" } },
   onUpdate: () => {
+    if (busy) return;
     markDirty();
-    scheduleWordCount();
-    scheduleOutline();
+    scheduleCounts();
+    schedulePanel();
   },
-  onSelectionUpdate: () => refreshToolbar(),
+  onSelectionUpdate: () => {
+    refreshToolbar();
+    scheduleCounts();
+  },
   onTransaction: () => refreshToolbar(),
 });
 
-// --- Plan du document -------------------------------------------------------
+const chain = () => editor.chain().focus();
 
-const outline = document.querySelector<HTMLElement>("#outline")!;
-const outlineList = document.querySelector<HTMLOListElement>("#outline-list")!;
-let outlineTimer: number | undefined;
+// --- Onglets -------------------------------------------------------------------
 
-function scheduleOutline() {
-  window.clearTimeout(outlineTimer);
-  outlineTimer = window.setTimeout(updateOutline, 250);
+const tabs = new TabTree(
+  editor,
+  () => {
+    // Un autre onglet est affiché.
+    closeFind();
+    refreshToolbar();
+    renderPanel();
+    updateCounts();
+    $("#desk").scrollTop = 0;
+  },
+  () => {
+    markDirty();
+    renderPanel();
+  },
+);
+// --- Panneau de gauche : onglets et plan ------------------------------------------
+
+const sidePanel = $<HTMLElement>("#side-panel");
+const panelShow = $<HTMLButtonElement>("#panel-show");
+const tabTree = $<HTMLUListElement>("#tab-tree");
+let panelTimer: number | undefined;
+
+function schedulePanel() {
+  window.clearTimeout(panelTimer);
+  panelTimer = window.setTimeout(renderPanel, 250);
 }
 
-function updateOutline() {
-  if (outline.hidden) return;
+function setPanelVisible(visible: boolean) {
+  sidePanel.hidden = !visible;
+  panelShow.hidden = visible;
+  prefs.set("panel", visible ? "1" : "0");
+  if (visible) renderPanel();
+}
+
+/** Les titres de l'onglet ouvert, affichés sous lui comme dans Google Docs. */
+function outlineItems(): HTMLLIElement[] {
   const items: HTMLLIElement[] = [];
   editor.state.doc.descendants((node, pos) => {
     if (node.type.name !== "heading") return true;
     const li = document.createElement("li");
-    li.className = `level-${node.attrs.level}`;
+    li.className = `outline-item level-${node.attrs.level}`;
     li.textContent = node.textContent || "(titre vide)";
+    li.title = li.textContent;
     li.addEventListener("click", () => {
       editor.chain().focus().setTextSelection(pos + 1).run();
       (editor.view.nodeDOM(pos) as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -115,35 +200,388 @@ function updateOutline() {
     items.push(li);
     return false;
   });
-  outlineList.replaceChildren(...items);
-  document.querySelector<HTMLElement>("#outline-empty")!.hidden = items.length > 0;
+  return items;
 }
 
-function toggleOutline() {
-  outline.hidden = !outline.hidden;
-  toolbar.querySelector('[data-action="outline"]')?.classList.toggle("active", !outline.hidden);
-  updateOutline();
+function tabRow(node: TabNode, depth: number): HTMLLIElement {
+  const li = document.createElement("li");
+  li.setAttribute("role", "treeitem");
+  const row = document.createElement("div");
+  row.className = "tab-row";
+  row.classList.toggle("active", node.id === tabs.activeId);
+  row.style.paddingLeft = `${8 + depth * 16}px`;
+  row.title = node.title;
+
+  const caret = document.createElement("button");
+  caret.className = "caret";
+  caret.type = "button";
+  caret.innerHTML = ICONS.caret;
+  caret.classList.toggle("open", node.expanded);
+  caret.style.visibility = node.children.length ? "visible" : "hidden";
+  caret.title = node.expanded ? "Masquer les sous-onglets" : "Afficher les sous-onglets";
+  caret.addEventListener("click", (e) => {
+    e.stopPropagation();
+    node.expanded = !node.expanded;
+    renderPanel();
+  });
+
+  const icon = document.createElement("span");
+  icon.className = "tab-icon";
+  icon.innerHTML = ICONS.tab;
+  const title = document.createElement("span");
+  title.className = "tab-title";
+  title.textContent = node.title;
+
+  const more = document.createElement("button");
+  more.className = "more";
+  more.type = "button";
+  more.title = "Options de l'onglet";
+  more.innerHTML = ICONS.more;
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    popup(more, tabMenu(node, depth), { align: "left" });
+  });
+
+  row.append(caret, icon, title, more);
+  row.addEventListener("click", () => {
+    tabs.activate(node.id);
+    editor.commands.focus();
+  });
+  row.addEventListener("dblclick", () => renameTab(node));
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    popup(more, tabMenu(node, depth));
+  });
+  li.append(row);
+
+  if (node.id === tabs.activeId) {
+    const outline = document.createElement("ul");
+    outline.className = "outline";
+    outline.style.paddingLeft = `${30 + depth * 16}px`;
+    const items = outlineItems();
+    if (items.length) outline.append(...items);
+    else {
+      const empty = document.createElement("li");
+      empty.className = "outline-empty";
+      empty.textContent = "Les titres ajoutés au document s'afficheront ici.";
+      outline.append(empty);
+    }
+    li.append(outline);
+  }
+  if (node.children.length && node.expanded) {
+    const sub = document.createElement("ul");
+    sub.setAttribute("role", "group");
+    sub.append(...node.children.map((c) => tabRow(c, depth + 1)));
+    li.append(sub);
+  }
+  return li;
 }
 
-// --- Correcteur orthographique --------------------------------------------
+function renderPanel() {
+  if (sidePanel.hidden) return;
+  tabTree.replaceChildren(...tabs.roots.map((n) => tabRow(n, 0)));
+}
 
-function toggleSpellcheck() {
-  const dom = editor.view.dom as HTMLElement;
-  const on = dom.spellcheck;
-  dom.spellcheck = !on;
-  toolbar.querySelector('[data-action="spellcheck"]')?.classList.toggle("active", !on);
-  // Force le navigateur à revérifier (ou effacer) les soulignements.
-  dom.blur();
+function tabMenu(node: TabNode, depth: number): MenuItem[] {
+  const onlyOne = tabs.roots.length === 1 && tabs.roots[0] === node;
+  return [
+    { label: "Renommer", action: () => renameTab(node) },
+    {
+      label: "Ajouter un sous-onglet",
+      disabled: depth >= MAX_TAB_LEVEL - 1,
+      action: () => tabs.add({ parentId: node.id }),
+    },
+    { label: "Dupliquer", action: () => tabs.duplicate(node.id) },
+    SEP,
+    { label: "Monter", action: () => tabs.move(node.id, -1) },
+    { label: "Descendre", action: () => tabs.move(node.id, 1) },
+    {
+      label: "Mettre en sous-onglet de l'onglet du dessus",
+      disabled: !tabs.canIndent(node.id),
+      action: () => tabs.indent(node.id),
+    },
+    { label: "Remonter d'un niveau", disabled: depth === 0, action: () => tabs.outdent(node.id) },
+    SEP,
+    { label: "Supprimer", disabled: onlyOne, action: () => deleteTab(node) },
+  ];
+}
+
+const renameDialog = $<HTMLDialogElement>("#rename-dialog");
+const renameInput = $<HTMLInputElement>("#rename-input");
+let renaming: TabNode | null = null;
+
+function renameTab(node: TabNode) {
+  renaming = node;
+  renameInput.value = node.title;
+  renameDialog.returnValue = "";
+  renameDialog.showModal();
+  renameInput.select();
+}
+
+renameDialog.addEventListener("close", () => {
+  if (renameDialog.returnValue === "ok" && renaming) tabs.rename(renaming.id, renameInput.value);
+  renaming = null;
+  setTimeout(() => editor.commands.focus());
+});
+
+async function deleteTab(node: TabNode) {
+  const sub = node.children.length ? " et ses sous-onglets" : "";
+  const ok = await confirmDialog(`Supprimer l'onglet « ${node.title} »${sub} ? Son contenu sera perdu.`, "Supprimer");
+  if (ok) tabs.remove(node.id);
+}
+
+async function confirmDialog(message: string, okLabel: string) {
+  try {
+    return await ask(message, { title: "Text Machine", kind: "warning", okLabel, cancelLabel: "Annuler" });
+  } catch {
+    return window.confirm(message);
+  }
+}
+
+sidePanel.addEventListener("click", (event) => {
+  const action = (event.target as HTMLElement).closest<HTMLElement>("[data-panel]")?.dataset.panel;
+  if (action === "hide") setPanelVisible(false);
+  else if (action === "add") tabs.add();
+});
+panelShow.addEventListener("click", () => setPanelVisible(true));
+
+// --- Feuille de styles -------------------------------------------------------------
+
+const styleElement = document.head.appendChild(document.createElement("style"));
+
+function setStyles(next: StyleSheet, dirty = true) {
+  styles = normalizeStyles(next);
+  styleElement.textContent = stylesToCss(styles);
+  if (dirty) markDirty();
+  refreshToolbar();
+  // Les hauteurs changent : on recalcule les pages.
+  refreshPagination(editor.view);
+}
+
+/** Style du paragraphe où se trouve le curseur. */
+function currentStyleKey(): StyleKey {
+  const level = [1, 2, 3, 4].find((l) => editor.isActive("heading", { level: l }));
+  return level ? styleOfLevel(level) : "normal";
+}
+
+function applyStyle(key: StyleKey) {
+  const level = STYLE_LEVEL[key];
+  if (level === 0) chain().setParagraph().run();
+  else chain().setHeading({ level: level as 1 | 2 | 3 | 4 }).run();
+}
+
+/**
+ * « Mettre à jour le style selon la sélection » : le style prend la mise en
+ * forme du paragraphe où est le curseur, qui perd alors sa mise en forme
+ * directe (elle vient maintenant du style).
+ */
+function updateStyleFromSelection() {
+  const key = currentStyleKey();
+  const style = { ...styles[key] };
+  const text = editor.getAttributes("textStyle");
+  const block = editor.getAttributes(key === "normal" ? "paragraph" : "heading");
+  if (text.fontFamily) style.fontFamily = String(text.fontFamily).replace(/["']/g, "");
+  if (text.fontSize) style.fontSize = parseFloat(text.fontSize) || style.fontSize;
+  if (text.color) style.color = text.color;
+  if (editor.isActive("bold")) style.bold = true;
+  if (editor.isActive("italic")) style.italic = true;
+  if (block.lineHeight) style.lineHeight = parseFloat(block.lineHeight) || style.lineHeight;
+  setStyles({ ...styles, [key]: style });
+  const { $from, from, to } = editor.state.selection;
+  editor
+    .chain()
+    .focus()
+    .setTextSelection({ from: $from.start(), to: $from.end() })
+    .unsetFontFamily()
+    .unsetFontSize()
+    .unsetColor()
+    .unsetBold()
+    .unsetItalic()
+    .setBlockLineHeight(null)
+    .setTextSelection({ from, to })
+    .run();
+  setSaveStatus(`Style « ${STYLE_NAMES[key]} » mis à jour`);
+}
+
+// Fenêtre « Styles de paragraphe ».
+const stylesDialog = $<HTMLDialogElement>("#styles-dialog");
+const styleList = $<HTMLUListElement>("#style-list");
+const styleForm = $<HTMLElement>("#style-form");
+let editingStyle: StyleKey = "normal";
+const styleField = (name: string) => styleForm.querySelector<HTMLInputElement & HTMLSelectElement>(`[name="${name}"]`)!;
+
+function fontOptions(select: HTMLSelectElement, current: string, inherit?: string) {
+  const fonts = [...$<HTMLSelectElement>("#font-family").options].map((o) => o.value);
+  if (current && !fonts.includes(current)) fonts.push(current);
+  select.replaceChildren();
+  if (inherit) select.append(new Option(`Comme le texte normal (${inherit})`, ""));
+  for (const f of fonts.sort((a, b) => a.localeCompare(b))) select.append(new Option(f, f));
+  select.value = current;
+}
+
+function renderStyleDialog() {
+  styleList.replaceChildren(
+    ...STYLE_KEYS.map((key) => {
+      const li = document.createElement("li");
+      li.textContent = STYLE_NAMES[key];
+      li.setAttribute("style", previewCss(styles, key));
+      li.classList.toggle("active", key === editingStyle);
+      li.addEventListener("click", () => {
+        editingStyle = key;
+        renderStyleDialog();
+      });
+      return li;
+    }),
+  );
+  const s = styles[editingStyle];
+  fontOptions(
+    styleField("fontFamily"),
+    editingStyle === "normal" ? fontOf(styles, "normal") : (s.fontFamily ?? ""),
+    editingStyle === "normal" ? undefined : fontOf(styles, "normal"),
+  );
+  styleField("fontSize").value = String(s.fontSize);
+  styleField("color").value = s.color || "#000000";
+  styleField("bold").checked = s.bold;
+  styleField("italic").checked = s.italic;
+  const lh = styleField("lineHeight");
+  if (![...lh.options].some((o) => Number(o.value) === s.lineHeight)) lh.append(new Option(String(s.lineHeight).replace(".", ","), String(s.lineHeight)));
+  lh.value = [...lh.options].find((o) => Number(o.value) === s.lineHeight)!.value;
+  styleField("spaceBefore").value = String(s.spaceBefore);
+  styleField("spaceAfter").value = String(s.spaceAfter);
+}
+
+function readStyleForm() {
+  const num = (name: string, fallback: number, min: number, max: number) => {
+    const v = parseFloat(styleField(name).value.replace(",", "."));
+    return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+  };
+  const s = styles[editingStyle];
+  const color = styleField("color").value;
+  setStyles({
+    ...styles,
+    [editingStyle]: {
+      fontFamily: styleField("fontFamily").value || null,
+      fontSize: num("fontSize", s.fontSize, 6, 96),
+      bold: styleField("bold").checked,
+      italic: styleField("italic").checked,
+      color: color.toLowerCase() === "#000000" ? null : color,
+      lineHeight: num("lineHeight", s.lineHeight, 0.8, 3),
+      spaceBefore: num("spaceBefore", s.spaceBefore, 0, 96),
+      spaceAfter: num("spaceAfter", s.spaceAfter, 0, 96),
+    },
+  });
+  // Seule la liste change (le formulaire garde le champ en cours de saisie).
+  for (const [i, li] of [...styleList.children].entries()) {
+    li.setAttribute("style", previewCss(styles, STYLE_KEYS[i]));
+  }
+}
+
+styleForm.addEventListener("input", readStyleForm);
+styleForm.addEventListener("change", readStyleForm);
+$("#style-reset").addEventListener("click", () => {
+  setStyles({ ...styles, [editingStyle]: structuredClone((defaultStyles ?? DEFAULT_STYLES)[editingStyle]) });
+  renderStyleDialog();
+});
+$("#styles-save-default").addEventListener("click", saveDefaultStyles);
+
+function openStylesDialog() {
+  editingStyle = currentStyleKey();
+  renderStyleDialog();
+  stylesDialog.showModal();
+}
+stylesDialog.addEventListener("close", () => setTimeout(() => editor.commands.focus()));
+
+async function saveDefaultStyles() {
+  try {
+    await invoke("save_default_styles", { styles });
+    defaultStyles = structuredClone(styles);
+    setSaveStatus("Styles enregistrés pour les nouveaux documents");
+  } catch (e) {
+    alert(String(e));
+  }
+}
+
+function useDefaultStyles() {
+  setStyles(structuredClone(defaultStyles ?? DEFAULT_STYLES));
+}
+
+function styleMenu(): MenuItem[] {
+  return [
+    ...STYLE_KEYS.map((key) => ({
+      label: STYLE_NAMES[key],
+      checked: key === currentStyleKey(),
+      submenu: [
+        { label: `Appliquer « ${STYLE_NAMES[key]} »`, action: () => applyStyle(key) },
+        {
+          label: `Mettre à jour « ${STYLE_NAMES[key]} » selon la sélection`,
+          disabled: key !== currentStyleKey(),
+          action: updateStyleFromSelection,
+        },
+      ],
+    })),
+    SEP,
+    { label: "Modifier les styles…", action: openStylesDialog },
+    { label: "Enregistrer comme styles par défaut", action: saveDefaultStyles },
+    { label: "Utiliser les styles par défaut", action: useDefaultStyles },
+    {
+      label: "Revenir aux styles d'origine de Text Machine",
+      action: () => setStyles(structuredClone(DEFAULT_STYLES)),
+    },
+  ];
+}
+
+// --- Majuscules / minuscules ------------------------------------------------------
+
+type CaseMode = "lower" | "upper" | "title";
+
+function changeCase(mode: CaseMode) {
+  const { from, to, empty } = editor.state.selection;
+  if (empty) return;
+  const { tr, doc, schema } = editor.state;
+  const pieces: { from: number; to: number; text: string; marks: readonly any[] }[] = [];
+  let previous = " ";
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isText) {
+      if (node.isBlock) previous = " ";
+      return true;
+    }
+    const start = Math.max(from, pos);
+    const end = Math.min(to, pos + node.nodeSize);
+    const text = node.text!.slice(start - pos, end - pos);
+    let out = "";
+    for (const ch of text) {
+      if (mode === "lower") out += ch.toLocaleLowerCase("fr");
+      else if (mode === "upper") out += ch.toLocaleUpperCase("fr");
+      else out += /[\s\-'’(«"]/.test(previous) ? ch.toLocaleUpperCase("fr") : ch.toLocaleLowerCase("fr");
+      previous = ch;
+    }
+    if (out !== text) pieces.push({ from: start, to: end, text: out, marks: node.marks });
+    return false;
+  });
+  // De la fin vers le début : les positions restent justes.
+  for (const p of pieces.reverse()) {
+    tr.replaceWith(p.from, p.to, schema.text(p.text, p.marks as any));
+  }
+  if (tr.docChanged) {
+    // La sélection garde le texte transformé.
+    tr.setSelection(TextSelection.create(tr.doc, from, tr.mapping.map(to)));
+    editor.view.dispatch(tr);
+  }
   editor.commands.focus();
+}
+
+function insertDate() {
+  const today = new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+  chain().insertContent(today).run();
 }
 
 // --- Rechercher / remplacer -------------------------------------------------
 
-const findBar = document.querySelector<HTMLElement>("#find-bar")!;
-const findInput = document.querySelector<HTMLInputElement>("#find-input")!;
-const replaceInput = document.querySelector<HTMLInputElement>("#replace-input")!;
-const findCase = document.querySelector<HTMLInputElement>("#find-case")!;
-const findCount = document.querySelector<HTMLElement>("#find-count")!;
+const findBar = $<HTMLElement>("#find-bar");
+const findInput = $<HTMLInputElement>("#find-input");
+const replaceInput = $<HTMLInputElement>("#replace-input");
+const findCase = $<HTMLInputElement>("#find-case");
+const findCount = $<HTMLElement>("#find-count");
 
 function openFind() {
   findBar.hidden = false;
@@ -155,6 +593,7 @@ function openFind() {
 }
 
 function closeFind() {
+  if (findBar.hidden) return;
   findBar.hidden = true;
   editor.chain().setSearch("").focus().run();
 }
@@ -194,11 +633,16 @@ findBar.addEventListener("click", (event) => {
   refreshFindCount();
 });
 
-// --- Pages -----------------------------------------------------------------
+// --- Pages, affichage sans pagination, zoom -------------------------------------
 
-const paper = document.querySelector<HTMLElement>("#paper")!;
-const sheets = document.querySelector<HTMLElement>("#sheets")!;
+const paper = $<HTMLElement>("#paper");
+const sheets = $<HTMLElement>("#sheets");
+const desk = $<HTMLElement>("#desk");
 const printStyle = document.head.appendChild(document.createElement("style"));
+let zoom = Number(prefs.get("zoom", "1")) || 1;
+let pageCount = 1;
+
+const isPageless = () => pageSetup.pageless && !forcePaged;
 
 /** Applique le format de page : taille de la feuille et marges. */
 function applyPageSetup() {
@@ -213,21 +657,24 @@ function applyPageSetup() {
   paper.style.setProperty("--m-bottom", `${mmToPx(m.bottom)}px`);
   paper.style.setProperty("--m-left", `${mmToPx(m.left)}px`);
   paper.style.setProperty("--m-right", `${mmToPx(m.right)}px`);
+  paper.classList.toggle("pageless", isPageless());
   lastPages = -1;
 }
 
 let lastPages = -1;
 /** Dessine une feuille blanche (avec son numéro) par page. */
 function drawSheets(pages: number) {
-  if (pages === lastPages) return;
-  lastPages = pages;
+  const key = isPageless() ? 0 : pages;
+  if (key === lastPages) return;
+  lastPages = key;
+  pageCount = pages;
   paper.style.setProperty("--pages", String(pages));
   sheets.replaceChildren(
     ...Array.from({ length: pages }, (_, i) => {
       const sheet = document.createElement("div");
       sheet.className = "sheet";
       sheet.style.top = `calc(${i} * (var(--page-h) + var(--page-gap)))`;
-      if (pageSetup.pageNumbers) {
+      if (pageSetup.pageNumbers && !isPageless()) {
         const number = document.createElement("span");
         number.className = "page-number";
         number.textContent = String(i + 1);
@@ -236,17 +683,66 @@ function drawSheets(pages: number) {
       return sheet;
     }),
   );
-  document.querySelector("#page-count")!.textContent = `${pages} page${pages > 1 ? "s" : ""}`;
+  renderWordBox();
 }
 
-function setPageSetup(setup: PageSetup) {
-  pageSetup = setup;
-  markDirty();
+function setPageSetup(setup: PageSetup, dirty = true) {
+  pageSetup = { ...structuredClone(DEFAULT_PAGE_SETUP), ...setup };
+  if (dirty) markDirty();
   applyPageSetup();
   refreshPagination(editor.view);
 }
 
-applyPageSetup();
+function setPageless(pageless: boolean) {
+  if (pageless === pageSetup.pageless) return;
+  setPageSetup({ ...pageSetup, pageless });
+}
+
+/** Le temps que la mise en page (et le découpage en pages) se refasse. */
+const waitForLayout = () =>
+  new Promise<void>((resolve) => {
+    let n = 0;
+    const tick = () => (++n >= 4 ? setTimeout(resolve, 60) : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  });
+
+/** Passe en mode page le temps d'un export ou d'une impression. */
+async function withPages<T>(run: () => Promise<T>): Promise<T> {
+  if (!pageSetup.pageless) return run();
+  forcePaged = true;
+  applyPageSetup();
+  refreshPagination(editor.view);
+  await waitForLayout();
+  try {
+    return await run();
+  } finally {
+    leavePages();
+  }
+}
+
+function leavePages() {
+  if (!forcePaged) return;
+  forcePaged = false;
+  applyPageSetup();
+  refreshPagination(editor.view);
+}
+
+function setZoom(value: number) {
+  zoom = Math.min(3, Math.max(0.3, value));
+  paper.style.setProperty("zoom", String(zoom));
+  prefs.set("zoom", String(zoom));
+  const select = $<HTMLSelectElement>("#zoom");
+  if (![...select.options].some((o) => Number(o.value) === zoom)) {
+    select.append(new Option(`${Math.round(zoom * 100)} %`, String(zoom)));
+  }
+  select.value = [...select.options].find((o) => Number(o.value) === zoom)!.value;
+  refreshPagination(editor.view);
+}
+
+$<HTMLSelectElement>("#zoom").addEventListener("change", (e) => {
+  setZoom(Number((e.target as HTMLSelectElement).value));
+  editor.commands.focus();
+});
 
 // --- Images ----------------------------------------------------------------
 
@@ -263,37 +759,124 @@ function insertImageFile(file: File, pos?: number) {
   const reader = new FileReader();
   reader.onload = () => {
     const image = { type: "image", attrs: { src: String(reader.result), alt: file.name } };
-    const chain = editor.chain().focus();
-    if (pos === undefined) chain.insertContent(image).run();
-    else chain.insertContentAt(pos, image).run();
+    const c = editor.chain().focus();
+    if (pos === undefined) c.insertContent(image).run();
+    else c.insertContentAt(pos, image).run();
   };
   reader.readAsDataURL(file);
 }
 
-// --- Nombre de mots, calculé par le cœur Rust -------------------------------
+// --- Nombre de mots et de signes, calculés par le cœur Rust -----------------------
 
-let wordTimer: number | undefined;
-function scheduleWordCount() {
-  window.clearTimeout(wordTimer);
-  wordTimer = window.setTimeout(updateWordCount, 300);
+interface TextStats {
+  words: number;
+  characters: number;
+  charactersNoSpaces: number;
 }
 
-async function updateWordCount() {
-  const n = await invoke<number>("word_count", { doc: editor.getJSON() });
-  document.querySelector("#word-count")!.textContent =
-    `${n} mot${n > 1 ? "s" : ""}`;
+const wordBox = $<HTMLButtonElement>("#word-box");
+let showWordBox = prefs.get("wordBox", "0") === "1";
+let tabStats: TextStats = { words: 0, characters: 0, charactersNoSpaces: 0 };
+let selectionStats: TextStats | null = null;
+let countTimer: number | undefined;
+
+const stats = (doc: JSONContent) =>
+  invoke<TextStats>("text_stats", { doc }).catch(() => ({ words: 0, characters: 0, charactersNoSpaces: 0 }));
+
+function selectionDoc(): JSONContent | null {
+  const { from, to, empty } = editor.state.selection;
+  if (empty) return null;
+  return editor.state.doc.cut(from, to).toJSON();
 }
+
+/** Tous les onglets à la suite (pour compter tout le document). */
+function allTabsDoc(): JSONContent {
+  return {
+    type: "doc",
+    content: tabs.flat().flatMap(({ node }) => tabs.documentOf(node).content ?? []),
+  };
+}
+
+function scheduleCounts() {
+  window.clearTimeout(countTimer);
+  countTimer = window.setTimeout(updateCounts, 300);
+}
+
+async function updateCounts() {
+  if (busy) return;
+  const sel = selectionDoc();
+  [tabStats, selectionStats] = await Promise.all([stats(editor.getJSON()), sel ? stats(sel) : null]);
+  renderWordBox();
+}
+
+const plural = (n: number, word: string) => `${n.toLocaleString("fr-FR")} ${word}${n > 1 ? "s" : ""}`;
+
+function renderWordBox() {
+  wordBox.hidden = !showWordBox;
+  if (!showWordBox) return;
+  const s = selectionStats ?? tabStats;
+  const parts = [
+    selectionStats ? `${plural(s.words, "mot")} sur ${tabStats.words.toLocaleString("fr-FR")}` : plural(s.words, "mot"),
+    plural(s.characters, "signe"),
+  ];
+  if (!isPageless()) parts.push(plural(pageCount, "page"));
+  wordBox.textContent = parts.join(" · ");
+}
+
+function setShowWordBox(on: boolean) {
+  showWordBox = on;
+  prefs.set("wordBox", on ? "1" : "0");
+  renderWordBox();
+}
+
+const countDialog = $<HTMLDialogElement>("#count-dialog");
+
+async function openCountDialog() {
+  const sel = selectionDoc();
+  const several = tabs.count() > 1;
+  const [tab, all, selection] = await Promise.all([
+    stats(editor.getJSON()),
+    several ? stats(allTabsDoc()) : null,
+    sel ? stats(sel) : null,
+  ]);
+  const columns: [string, TextStats | null][] = [
+    ["Sélection", selection],
+    [several ? "Onglet" : "Document", tab],
+    ["Tous les onglets", all],
+  ];
+  const shown = columns.filter(([, s]) => s) as [string, TextStats][];
+  const row = (label: string, cells: string[]) =>
+    `<tr><th>${label}</th>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`;
+  const n = (v: number) => v.toLocaleString("fr-FR");
+  $("#count-table").innerHTML = [
+    shown.length > 1 ? `<tr><th></th>${shown.map(([l]) => `<td class="head">${l}</td>`).join("")}</tr>` : "",
+    !isPageless() ? row("Pages", shown.map(([l]) => (l === "Sélection" || l === "Tous les onglets" ? "" : n(pageCount)))) : "",
+    row("Mots", shown.map(([, s]) => n(s.words))),
+    row("Signes (espaces compris)", shown.map(([, s]) => n(s.characters))),
+    row("Signes (sans les espaces)", shown.map(([, s]) => n(s.charactersNoSpaces))),
+  ].join("");
+  $<HTMLInputElement>("#count-live").checked = showWordBox;
+  countDialog.showModal();
+}
+
+$<HTMLInputElement>("#count-live").addEventListener("change", (e) =>
+  setShowWordBox((e.target as HTMLInputElement).checked),
+);
+countDialog.addEventListener("close", () => setTimeout(() => editor.commands.focus()));
+wordBox.addEventListener("click", openCountDialog);
 
 // --- Fichiers ---------------------------------------------------------------
 
 interface NativeFile {
-  document: JSONContent;
+  tabs: TabData[];
   page: PageSetup;
+  styles?: StyleSheet;
 }
 
 interface Session {
   recent: string[];
   lastFile: string | null;
+  defaultStyles: StyleSheet | null;
 }
 
 /** Modifications pas encore écrites sur le disque. */
@@ -303,19 +886,25 @@ let loading = false;
 let autosaveTimer: number | undefined;
 const AUTOSAVE_DELAY_MS = 1500;
 const fileName = (path: string) => path.split(/[\\/]/).pop()!;
+let recentFiles: string[] = [];
+
+function fileData(): NativeFile {
+  return { tabs: tabs.toData(), page: pageSetup, styles };
+}
 
 function setPath(path: string | null) {
   currentPath = path;
   const name = path ? fileName(path) : "Sans titre";
-  document.querySelector("#file-name")!.textContent = name;
+  $("#file-name").textContent = name;
+  $("#file-name").title = path ?? "Document pas encore enregistré";
   document.title = `${name} — Text Machine`;
 }
 
 function setSaveStatus(text: string) {
-  document.querySelector("#save-status")!.textContent = text;
+  $("#save-status").textContent = text;
 }
 
-/** Appelé à chaque modification du document ou de la mise en page. */
+/** Appelé à chaque modification du document ou de ses réglages. */
 function markDirty() {
   if (loading) return;
   dirty = true;
@@ -330,11 +919,17 @@ function markDirty() {
  */
 async function autosave() {
   if (!dirty) return;
+  if (busy) {
+    // Un export est en cours : l'éditeur montre un document temporaire.
+    window.clearTimeout(autosaveTimer);
+    autosaveTimer = window.setTimeout(autosave, AUTOSAVE_DELAY_MS);
+    return;
+  }
   try {
     if (currentPath) {
       await writeFile(currentPath);
     } else {
-      await invoke("save_draft", { doc: editor.getJSON(), page: pageSetup });
+      await invoke("save_draft", { file: fileData() });
       dirty = false;
       setSaveStatus("Brouillon enregistré");
     }
@@ -345,7 +940,7 @@ async function autosave() {
 
 async function writeFile(path: string) {
   setSaveStatus("Enregistrement…");
-  await invoke("save_document", { path, doc: editor.getJSON(), page: pageSetup });
+  await invoke("save_document", { path, file: fileData() });
   dirty = false;
   setPath(path);
   setSaveStatus(savedLabel(path));
@@ -354,21 +949,22 @@ async function writeFile(path: string) {
 
 /** Markdown et texte ne gardent pas toute la mise en forme : on le rappelle. */
 function savedLabel(path: string) {
-  if (/\.(md|markdown)$/i.test(path)) return "Enregistré en Markdown (sans couleurs ni polices)";
+  if (/\.(md|markdown)$/i.test(path)) return "Enregistré en Markdown (sans couleurs, polices ni styles)";
   if (/\.txt$/i.test(path)) return "Enregistré en texte brut (sans mise en forme)";
   return "Enregistré";
 }
 
 function loadFile(file: NativeFile, path: string | null) {
   loading = true;
-  editor.commands.setContent(file.document);
-  setPageSetup(file.page);
+  tabs.load(file.tabs);
+  setStyles(file.styles ?? DEFAULT_STYLES, false);
+  setPageSetup(file.page, false);
   loading = false;
   dirty = false;
   setPath(path);
   setSaveStatus(path ? savedLabel(path) : "");
-  updateWordCount();
-  scheduleOutline();
+  updateCounts();
+  renderPanel();
 }
 
 async function openPath(path: string) {
@@ -404,16 +1000,35 @@ async function saveFileAs() {
   }
 }
 
-/** Nom proposé : le premier titre (ou la première ligne) du document. */
+/** Nom proposé : le premier titre (ou la première ligne) du premier onglet. */
+/** Le texte d'un onglet (sans mise en forme). */
+function tabText(node: TabNode) {
+  try {
+    return editor.schema.nodeFromJSON(tabs.documentOf(node)).textContent;
+  } catch {
+    return "";
+  }
+}
+
 function suggestedName() {
-  const first = editor.state.doc.firstChild?.textContent.trim() ?? "";
-  return first.replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "Sans titre";
+  let text = "";
+  try {
+    text = editor.schema.nodeFromJSON(tabs.documentOf(tabs.roots[0])).firstChild?.textContent.trim() ?? "";
+  } catch {
+    /* nom par défaut */
+  }
+  return text.replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "Sans titre";
 }
 
 /** Termine un enregistrement automatique en attente avant de changer de document. */
 async function flush() {
   window.clearTimeout(autosaveTimer);
   await autosave();
+}
+
+/** Le document contient-il du texte (dans un onglet quelconque) ? */
+function hasText() {
+  return tabs.flat().some(({ node }) => tabText(node).trim());
 }
 
 /**
@@ -423,7 +1038,7 @@ async function flush() {
  */
 async function leaveUntitled(): Promise<boolean> {
   await flush();
-  if (currentPath || !editor.getText().trim()) return true;
+  if (currentPath || !hasText()) return true;
   const keep = await ask("Ce document n'a pas encore de nom. Voulez-vous l'enregistrer ?", {
     title: "Text Machine",
     kind: "warning",
@@ -438,19 +1053,28 @@ async function leaveUntitled(): Promise<boolean> {
 async function newFile() {
   if (!(await leaveUntitled())) return;
   const empty: NativeFile = {
-    document: { type: "doc", content: [{ type: "paragraph" }] },
+    tabs: [{ title: "Onglet 1", document: { type: "doc", content: [{ type: "paragraph" }] } }],
     page: structuredClone(DEFAULT_PAGE_SETUP),
+    styles: structuredClone(defaultStyles ?? DEFAULT_STYLES),
   };
   loadFile(empty, null);
   await invoke("forget_last_file").catch(() => {});
-  await invoke("save_draft", { doc: empty.document, page: empty.page }).catch(() => {});
+  await invoke("save_draft", { file: fileData() }).catch(() => {});
   editor.commands.focus();
 }
 
-// --- Impression, PDF, export et import -------------------------------------
+// --- Impression, PDF, export ---------------------------------------------------
 
 /** Impression du système ; sur Mac, « PDF > Enregistrer au format PDF ». */
 async function printDocument() {
+  if (pageSetup.pageless) {
+    // Le temps de l'impression, le document est découpé en pages.
+    forcePaged = true;
+    applyPageSetup();
+    refreshPagination(editor.view);
+    await waitForLayout();
+    window.addEventListener("afterprint", leavePages, { once: true });
+  }
   try {
     await invoke("print_document");
   } catch {
@@ -464,102 +1088,119 @@ const EXPORTS: Record<"docx" | "md" | "txt", { name: string; extensions: string[
   txt: { name: "Texte brut", extensions: ["txt"] },
 };
 
+/** Word, Markdown et texte : tous les onglets, chacun avec son titre. */
 async function exportAs(kind: keyof typeof EXPORTS) {
   const filter = EXPORTS[kind];
   const path = await save({ filters: [filter], defaultPath: `${suggestedName()}.${filter.extensions[0]}` });
   if (!path) return;
   try {
-    await invoke("export_document", { path, doc: editor.getJSON(), page: pageSetup });
+    await invoke("export_document", { path, file: fileData() });
+    setSaveStatus(`Exporté : ${fileName(path)}`);
   } catch (e) {
     alert(String(e));
   }
+}
+
+/** Tous les onglets à la suite, chacun sur une nouvelle page avec son titre. */
+function printableAllTabs(): JSONContent {
+  const content: JSONContent[] = [];
+  tabs.flat().forEach(({ node, depth }, i) => {
+    if (i > 0) content.push({ type: "pageBreak" });
+    content.push({
+      type: "heading",
+      attrs: { level: depth + 1 },
+      content: [{ type: "text", text: node.title, marks: [{ type: "bold" }] }],
+    });
+    content.push(...(tabs.documentOf(node).content ?? []));
+  });
+  return { type: "doc", content };
 }
 
 /**
  * Export PDF direct : choix du fichier, puis la page est écrite telle
  * qu'à l'écran. Si ce n'est pas possible (hors Mac), on passe par l'impression.
  */
-async function exportPdf() {
+async function exportPdf(allTabs: boolean) {
+  const several = allTabs && tabs.count() > 1;
   const path = await save({
     filters: [{ name: "PDF", extensions: ["pdf"] }],
-    defaultPath: `${suggestedName()}.pdf`,
+    defaultPath: several || tabs.count() === 1 ? `${suggestedName()}.pdf` : `${tabs.active().title}.pdf`,
   });
   if (!path) return;
+  await flush();
+  busy = true;
   // Sans curseur ni sélection dans le PDF : on les remet après.
-  const selection = editor.state.selection;
+  const saved = editor.state;
+  const selection = saved.selection;
   editor.commands.blur();
   window.getSelection()?.removeAllRanges();
-  // Mode export : seules les feuilles, collées en haut à gauche (styles.css).
-  const desk = document.querySelector<HTMLElement>(".desk")!;
   const scroll = desk.scrollTop;
-  const pages = Number(paper.style.getPropertyValue("--pages")) || 1;
-  document.body.classList.add("exporting");
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  let failure: unknown = null;
   try {
-    await invoke("export_pdf", { path, page: pageSetup, pages });
+    if (several) {
+      const doc = createDocument(printableAllTabs(), editor.schema);
+      editor.view.updateState(EditorState.create({ doc, plugins: saved.plugins }));
+    }
+    await withPages(async () => {
+      // Mode export : seules les feuilles, collées en haut à gauche (styles.css).
+      document.body.classList.add("exporting");
+      refreshPagination(editor.view);
+      await waitForLayout();
+      try {
+        await invoke("export_pdf", { path, page: pageSetup, pages: pageCount || 1 });
+      } finally {
+        document.body.classList.remove("exporting");
+      }
+    });
     setSaveStatus(`PDF enregistré : ${fileName(path)}`);
   } catch (e) {
-    alert(`${e}\nLa fenêtre d'impression va s'ouvrir : choisissez « Enregistrer au format PDF ».`);
-    printDocument();
+    failure = e;
   } finally {
-    document.body.classList.remove("exporting");
+    if (several) editor.view.updateState(saved);
+    busy = false;
+    refreshPagination(editor.view);
     desk.scrollTop = scroll;
-    editor.chain().setTextSelection({ from: selection.from, to: selection.to }).focus().run();
   }
+  if (failure) {
+    alert(`${failure}\nLa fenêtre d'impression va s'ouvrir : choisissez « Enregistrer au format PDF ».`);
+    printDocument();
+    return;
+  }
+  editor.chain().setTextSelection({ from: selection.from, to: selection.to }).focus().run();
 }
 
-const exportMenu = document.querySelector<HTMLElement>("#export-menu")!;
-exportMenu.addEventListener("click", (event) => {
-  const kind = (event.target as HTMLElement).closest("button")?.dataset.export;
-  exportMenu.hidden = true;
-  if (kind === "pdf") exportPdf();
-  else if (kind === "print") printDocument();
-  else if (kind === "docx" || kind === "md" || kind === "txt") exportAs(kind);
-});
+function exportMenu(): MenuItem[] {
+  const several = tabs.count() > 1;
+  return [
+    ...(several
+      ? [
+          { label: "PDF, tous les onglets (.pdf)…", action: () => exportPdf(true) },
+          { label: "PDF, onglet actuel (.pdf)…", action: () => exportPdf(false) },
+        ]
+      : [{ label: "PDF (.pdf)…", action: () => exportPdf(false) }]),
+    { label: "Word (.docx)…", action: () => exportAs("docx") },
+    { label: "Markdown (.md)…", action: () => exportAs("md") },
+    { label: "Texte brut (.txt)…", action: () => exportAs("txt") },
+  ];
+}
 
-// Fichiers récents : un petit menu sous le bouton.
-const recentMenu = document.querySelector<HTMLElement>("#recent-menu")!;
-
+// Fichiers récents.
 async function refreshRecent() {
   const session = await invoke<Session>("load_session").catch(() => null);
-  const items = (session?.recent ?? []).map((path) => {
-    const button = document.createElement("button");
-    button.textContent = fileName(path);
-    button.title = path;
-    button.addEventListener("click", () => {
-      recentMenu.hidden = true;
-      openPath(path);
-    });
-    return button;
-  });
-  if (!items.length) {
-    const empty = document.createElement("span");
-    empty.className = "empty";
-    empty.textContent = "Aucun fichier récent";
-    items.push(empty as HTMLButtonElement);
-  }
-  recentMenu.replaceChildren(...items);
+  recentFiles = session?.recent ?? [];
 }
 
-function toggleRecent() {
-  recentMenu.hidden = !recentMenu.hidden;
-  if (!recentMenu.hidden) refreshRecent();
+function recentMenu(): MenuItem[] {
+  if (!recentFiles.length) return [{ label: "Aucun fichier récent", disabled: true }];
+  return recentFiles.map((path) => ({ label: fileName(path), action: () => openPath(path) }));
 }
-
-document.addEventListener("mousedown", (event) => {
-  const target = event.target as HTMLElement;
-  if (!recentMenu.hidden && !target.closest("#recent-menu, [data-action=recent]")) {
-    recentMenu.hidden = true;
-  }
-  if (!exportMenu.hidden && !target.closest("#export-menu, [data-action=export]")) {
-    exportMenu.hidden = true;
-  }
-});
 
 /** Au lancement : on rouvre le dernier fichier, ou le brouillon. */
 async function restoreSession() {
   try {
     const session = await invoke<Session>("load_session");
+    recentFiles = session.recent ?? [];
+    defaultStyles = session.defaultStyles ? normalizeStyles(session.defaultStyles) : null;
     // Pas de question « enregistrer ? » ici : le document d'accueil n'est
     // pas celui de l'utilisateur.
     if (session.lastFile) {
@@ -569,6 +1210,7 @@ async function restoreSession() {
     }
     const draft = await invoke<NativeFile | null>("load_draft");
     if (draft) loadFile(draft, null);
+    else if (defaultStyles) setStyles(defaultStyles, false);
   } catch {
     // Pas de session (premier lancement) : on garde le document d'accueil.
   }
@@ -582,29 +1224,221 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flush();
 });
 
+// --- Barre de menus ----------------------------------------------------------------
+
+const LINE_HEIGHTS: [string, string][] = [
+  ["1", "Simple"],
+  ["1.15", "1,15"],
+  ["1.5", "1,5"],
+  ["2", "Double"],
+];
+
+function lineHeightMenu(): MenuItem[] {
+  const current = blockAttrs().lineHeight ?? null;
+  return [
+    ...LINE_HEIGHTS.map(([value, label]) => ({
+      label,
+      checked: current === value,
+      action: () => chain().setBlockLineHeight(value).run(),
+    })),
+    SEP,
+    {
+      label: `Celui du style (${String(styles[currentStyleKey()].lineHeight).replace(".", ",")})`,
+      checked: current === null,
+      action: () => chain().setBlockLineHeight(null).run(),
+    },
+  ];
+}
+
+function tableMenu(): MenuItem[] {
+  return [
+    { label: "Insérer une ligne au-dessus", action: () => chain().addRowBefore().run() },
+    { label: "Insérer une ligne en dessous", action: () => chain().addRowAfter().run() },
+    { label: "Insérer une colonne à gauche", action: () => chain().addColumnBefore().run() },
+    { label: "Insérer une colonne à droite", action: () => chain().addColumnAfter().run() },
+    SEP,
+    { label: "Supprimer la ligne", action: () => chain().deleteRow().run() },
+    { label: "Supprimer la colonne", action: () => chain().deleteColumn().run() },
+    { label: "Première ligne en en-tête", action: () => chain().toggleHeaderRow().run() },
+    SEP,
+    { label: "Supprimer le tableau", action: () => chain().deleteTable().run() },
+  ];
+}
+
+setupMenubar($("#menubar"), [
+  {
+    label: "Fichier",
+    items: () => [
+      { label: "Nouveau document", shortcut: "⌘N", action: newFile },
+      { label: "Ouvrir…", shortcut: "⌘O", action: openFile },
+      { label: "Fichiers récents", submenu: recentMenu() },
+      SEP,
+      { label: "Enregistrer", shortcut: "⌘S", action: saveFile },
+      { label: "Enregistrer sous…", shortcut: "⇧⌘S", action: saveFileAs },
+      { label: "Exporter", submenu: exportMenu() },
+      SEP,
+      { label: "Mise en page…", action: openPageDialog },
+      { label: "Imprimer…", shortcut: "⌘P", action: printDocument },
+    ],
+  },
+  {
+    label: "Édition",
+    items: () => [
+      { label: "Annuler", shortcut: "⌘Z", disabled: !editor.can().undo(), action: () => chain().undo().run() },
+      { label: "Rétablir", shortcut: "⇧⌘Z", disabled: !editor.can().redo(), action: () => chain().redo().run() },
+      SEP,
+      { label: "Tout sélectionner", shortcut: "⌘A", action: () => chain().selectAll().run() },
+      SEP,
+      { label: "Rechercher et remplacer", shortcut: "⌘F", action: openFind },
+    ],
+  },
+  {
+    label: "Affichage",
+    items: () => [
+      { label: "Mode page", checked: !pageSetup.pageless, action: () => setPageless(false) },
+      { label: "Sans pagination (défilement continu)", checked: pageSetup.pageless, action: () => setPageless(true) },
+      SEP,
+      {
+        label: "Afficher les onglets et le plan",
+        shortcut: "⇧⌘O",
+        checked: !sidePanel.hidden,
+        action: () => setPanelVisible(sidePanel.hidden),
+      },
+      { label: "Afficher le nombre de mots", checked: showWordBox, action: () => setShowWordBox(!showWordBox) },
+      SEP,
+      {
+        label: "Zoom",
+        submenu: [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2].map((z) => ({
+          label: `${z * 100} %`,
+          checked: z === zoom,
+          action: () => setZoom(z),
+        })),
+      },
+    ],
+  },
+  {
+    label: "Insertion",
+    items: () => [
+      { label: "Image…", action: () => imageInput.click() },
+      { label: "Tableau", action: () => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+      { label: "Lien…", shortcut: "⌘K", action: openLinkDialog },
+      { label: "Ligne horizontale", action: () => chain().setHorizontalRule().run() },
+      { label: "Saut de page", shortcut: "⌘↩", action: () => chain().setPageBreak().run() },
+      { label: "Date du jour", action: insertDate },
+      SEP,
+      { label: "Onglet", action: () => tabs.add({ afterId: tabs.activeId }) },
+      {
+        label: "Sous-onglet",
+        disabled: (tabs.find(tabs.activeId)?.depth ?? 0) >= MAX_TAB_LEVEL - 1,
+        action: () => tabs.add({ parentId: tabs.activeId }),
+      },
+    ],
+  },
+  {
+    label: "Format",
+    items: () => [
+      {
+        label: "Texte",
+        submenu: [
+          { label: "Gras", shortcut: "⌘B", checked: editor.isActive("bold"), action: () => chain().toggleBold().run() },
+          { label: "Italique", shortcut: "⌘I", checked: editor.isActive("italic"), action: () => chain().toggleItalic().run() },
+          { label: "Souligné", shortcut: "⌘U", checked: editor.isActive("underline"), action: () => chain().toggleUnderline().run() },
+          { label: "Barré", shortcut: "⇧⌘X", checked: editor.isActive("strike"), action: () => chain().toggleStrike().run() },
+          { label: "Exposant", shortcut: "⌘.", checked: editor.isActive("superscript"), action: actions.superscript },
+          { label: "Indice", shortcut: "⌘,", checked: editor.isActive("subscript"), action: actions.subscript },
+          SEP,
+          {
+            label: "Majuscules",
+            submenu: [
+              { label: "minuscules", action: () => changeCase("lower") },
+              { label: "MAJUSCULES", action: () => changeCase("upper") },
+              { label: "Majuscule À Chaque Mot", action: () => changeCase("title") },
+            ],
+          },
+        ],
+      },
+      { label: "Styles de paragraphe", submenu: styleMenu() },
+      {
+        label: "Aligner et mettre en retrait",
+        submenu: [
+          { label: "À gauche", shortcut: "⇧⌘L", action: actions.alignLeft },
+          { label: "Centré", shortcut: "⇧⌘E", action: actions.alignCenter },
+          { label: "À droite", shortcut: "⇧⌘R", action: actions.alignRight },
+          { label: "Justifié", shortcut: "⇧⌘J", action: actions.alignJustify },
+          SEP,
+          { label: "Augmenter le retrait", shortcut: "Tab", action: actions.indent },
+          { label: "Diminuer le retrait", shortcut: "⇧Tab", action: actions.outdent },
+        ],
+      },
+      { label: "Interligne", submenu: lineHeightMenu() },
+      {
+        label: "Listes",
+        submenu: [
+          { label: "Liste à puces", shortcut: "⇧⌘8", checked: editor.isActive("bulletList"), action: actions.bulletList },
+          { label: "Liste numérotée", shortcut: "⇧⌘7", checked: editor.isActive("orderedList"), action: actions.orderedList },
+          { label: "Cases à cocher", shortcut: "⇧⌘9", checked: editor.isActive("taskList"), action: actions.taskList },
+        ],
+      },
+      { label: "Citation", checked: editor.isActive("blockquote"), action: actions.blockquote },
+      ...(editor.isActive("table") ? [{ label: "Tableau", submenu: tableMenu() }] : []),
+      SEP,
+      { label: "Effacer la mise en forme", shortcut: "⌘\\", action: actions.clearFormat },
+    ],
+  },
+  {
+    label: "Outils",
+    items: () => [
+      { label: "Nombre de mots…", shortcut: "⇧⌘C", action: openCountDialog },
+      { label: "Correcteur orthographique", checked: (editor.view.dom as HTMLElement).spellcheck, action: toggleSpellcheck },
+      SEP,
+      { label: "Modifier les styles de paragraphe…", action: openStylesDialog },
+    ],
+  },
+]);
+
+// --- Correcteur orthographique --------------------------------------------
+
+function toggleSpellcheck() {
+  const dom = editor.view.dom as HTMLElement;
+  const on = dom.spellcheck;
+  dom.spellcheck = !on;
+  toolbar.querySelector('[data-action="spellcheck"]')?.classList.toggle("active", !on);
+  // Force le navigateur à revérifier (ou effacer) les soulignements.
+  dom.blur();
+  editor.commands.focus();
+}
+
 // --- Barre d'outils ---------------------------------------------------------
 
-const toolbar = document.querySelector<HTMLElement>("#toolbar")!;
-const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
+const toolbar = $<HTMLElement>("#toolbar");
 const blockSelect = $<HTMLSelectElement>("#block-style");
 const fontFamilySelect = $<HTMLSelectElement>("#font-family");
-const fontSizeSelect = $<HTMLSelectElement>("#font-size");
-const lineHeightSelect = $<HTMLSelectElement>("#line-height");
+const fontSizeInput = $<HTMLInputElement>("#font-size");
 const textColor = $<HTMLInputElement>("#text-color");
 const highlightColor = $<HTMLInputElement>("#highlight-color");
 const linkDialog = $<HTMLDialogElement>("#link-dialog");
 const linkUrl = $<HTMLInputElement>("#link-url");
+const imageInput = $<HTMLInputElement>("#image-file");
+const tableTools = $<HTMLElement>("#table-tools");
 
-const chain = () => editor.chain().focus();
+const blockAttrs = () =>
+  editor.isActive("heading") ? editor.getAttributes("heading") : editor.getAttributes("paragraph");
+
+/** Taille du texte au curseur, en points (celle du style si rien n'est choisi). */
+function currentFontSize() {
+  const size = parseFloat(editor.getAttributes("textStyle").fontSize ?? "");
+  return Number.isFinite(size) ? size : styles[currentStyleKey()].fontSize;
+}
+
+function setFontSize(size: number) {
+  const clean = Math.round(Math.min(400, Math.max(1, size)) * 2) / 2;
+  chain().setFontSize(`${clean}pt`).run();
+}
 
 const actions: Record<string, () => unknown> = {
-  new: newFile,
-  open: openFile,
-  recent: toggleRecent,
-  export: () => (exportMenu.hidden = !exportMenu.hidden),
-  save: saveFile,
   undo: () => chain().undo().run(),
   redo: () => chain().redo().run(),
+  print: printDocument,
   bold: () => chain().toggleBold().run(),
   italic: () => chain().toggleItalic().run(),
   underline: () => chain().toggleUnderline().run(),
@@ -625,22 +1459,15 @@ const actions: Record<string, () => unknown> = {
   blockquote: () => chain().toggleBlockquote().run(),
   image: () => imageInput.click(),
   table: () => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
-  rowBefore: () => chain().addRowBefore().run(),
   rowAfter: () => chain().addRowAfter().run(),
-  colBefore: () => chain().addColumnBefore().run(),
   colAfter: () => chain().addColumnAfter().run(),
-  deleteRow: () => chain().deleteRow().run(),
-  deleteCol: () => chain().deleteColumn().run(),
-  toggleHeaderRow: () => chain().toggleHeaderRow().run(),
-  deleteTable: () => chain().deleteTable().run(),
-  pageBreak: () => chain().setPageBreak().run(),
-  outline: toggleOutline,
   find: openFind,
   spellcheck: toggleSpellcheck,
-  pageSetup: openPageDialog,
+  sizeDown: () => setFontSize(currentFontSize() - 1),
+  sizeUp: () => setFontSize(currentFontSize() + 1),
 };
 
-// Mise en page : format, orientation, marges (affichées en cm), numéros.
+// Mise en page : affichage, format, orientation, marges (en cm), numéros.
 const pageDialog = $<HTMLDialogElement>("#page-dialog");
 const pageForm = pageDialog.querySelector("form")!;
 const field = (name: string) => pageForm.elements.namedItem(name) as HTMLInputElement;
@@ -650,6 +1477,9 @@ function openPageDialog() {
   field("size").value = pageSetup.size;
   for (const radio of pageForm.querySelectorAll<HTMLInputElement>('[name="orientation"]')) {
     radio.checked = radio.value === (pageSetup.landscape ? "landscape" : "portrait");
+  }
+  for (const radio of pageForm.querySelectorAll<HTMLInputElement>('[name="mode"]')) {
+    radio.checked = radio.value === (pageSetup.pageless ? "pageless" : "pages");
   }
   for (const side of SIDES) field(side).value = String(+(pageSetup.margins[side] / 10).toFixed(2));
   field("pageNumbers").checked = pageSetup.pageNumbers;
@@ -671,11 +1501,10 @@ pageDialog.addEventListener("close", () => {
       pageForm.querySelector<HTMLInputElement>('[name="orientation"]:checked')?.value === "landscape",
     margins: { top: cm("top"), bottom: cm("bottom"), left: cm("left"), right: cm("right") },
     pageNumbers: field("pageNumbers").checked,
+    pageless: pageForm.querySelector<HTMLInputElement>('[name="mode"]:checked')?.value === "pageless",
   });
 });
 
-const imageInput = $<HTMLInputElement>("#image-file");
-const tableTools = $<HTMLElement>("#table-tools");
 imageInput.addEventListener("change", () => {
   const file = imageInput.files?.[0];
   if (file) insertImageFile(file);
@@ -690,30 +1519,34 @@ toolbar.addEventListener("mousedown", (event) => {
 toolbar.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest("button");
   const action = button?.dataset.action;
-  if (action && actions[action]) actions[action]();
+  if (action === "lineHeight") popup(button!, lineHeightMenu());
+  else if (action === "tableMenu") popup(button!, tableMenu());
+  else if (action && actions[action]) actions[action]();
 });
 
 blockSelect.addEventListener("change", () => {
   const value = blockSelect.value;
-  if (value === "p") chain().setParagraph().run();
-  else chain().setHeading({ level: Number(value) as 1 | 2 | 3 | 4 }).run();
+  applyStyle(value === "p" ? "normal" : styleOfLevel(Number(value)));
 });
 
 fontFamilySelect.addEventListener("change", () => {
   const font = fontFamilySelect.value;
-  if (font) chain().setFontFamily(font).run();
-  else chain().unsetFontFamily().run();
+  // La police du style : on retire la police choisie à la main.
+  if (font === fontOf(styles, currentStyleKey())) chain().unsetFontFamily().run();
+  else chain().setFontFamily(font).run();
 });
 
-fontSizeSelect.addEventListener("change", () => {
-  const size = fontSizeSelect.value;
-  if (size) chain().setFontSize(`${size}pt`).run();
-  else chain().unsetFontSize().run();
+fontSizeInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const size = parseFloat(fontSizeInput.value.replace(",", "."));
+    if (Number.isFinite(size)) setFontSize(size);
+    else editor.commands.focus();
+  } else if (event.key === "Escape") {
+    editor.commands.focus();
+  }
 });
-
-lineHeightSelect.addEventListener("change", () => {
-  chain().setBlockLineHeight(lineHeightSelect.value || null).run();
-});
+fontSizeInput.addEventListener("focus", () => fontSizeInput.select());
 
 textColor.addEventListener("change", () => chain().setColor(textColor.value).run());
 highlightColor.addEventListener("change", () =>
@@ -754,19 +1587,7 @@ function applyLinkDialog() {
   }
 }
 
-const TOGGLES = [
-  "bold",
-  "italic",
-  "underline",
-  "strike",
-  "superscript",
-  "subscript",
-  "link",
-  "bulletList",
-  "orderedList",
-  "taskList",
-  "blockquote",
-];
+const TOGGLES = ["bold", "italic", "underline", "link", "bulletList", "orderedList", "taskList"];
 
 function refreshToolbar() {
   for (const name of TOGGLES) {
@@ -781,56 +1602,92 @@ function refreshToolbar() {
       ?.classList.toggle("active", editor.isActive({ textAlign: align }));
   }
   tableTools.hidden = !editor.isActive("table");
+  toolbar.querySelector('[data-action="undo"]')?.toggleAttribute("disabled", !editor.can().undo());
+  toolbar.querySelector('[data-action="redo"]')?.toggleAttribute("disabled", !editor.can().redo());
 
-  const level = [1, 2, 3, 4].find((l) => editor.isActive("heading", { level: l }));
-  blockSelect.value = level ? String(level) : "p";
+  const key = currentStyleKey();
+  blockSelect.value = STYLE_LEVEL[key] ? String(STYLE_LEVEL[key]) : "p";
 
   const style = editor.getAttributes("textStyle");
-  fontFamilySelect.value = style.fontFamily ?? "";
-  fontSizeSelect.value = style.fontSize ? String(parseFloat(style.fontSize)) : "";
-  if (fontSizeSelect.selectedIndex < 0) fontSizeSelect.value = "";
-
-  const block = editor.isActive("heading")
-    ? editor.getAttributes("heading")
-    : editor.getAttributes("paragraph");
-  lineHeightSelect.value = block.lineHeight ?? "";
-  if (lineHeightSelect.selectedIndex < 0) lineHeightSelect.value = "";
+  const font = style.fontFamily ? String(style.fontFamily).replace(/["']/g, "") : fontOf(styles, key);
+  if (![...fontFamilySelect.options].some((o) => o.value === font)) fontFamilySelect.append(new Option(font, font));
+  fontFamilySelect.value = font;
+  if (document.activeElement !== fontSizeInput) {
+    fontSizeInput.value = String(currentFontSize()).replace(".", ",");
+  }
 }
 
 window.addEventListener("keydown", (event) => {
   if (!(event.metaKey || event.ctrlKey)) return;
-  if (event.key.toLowerCase() === "s") {
+  const key = event.key.toLowerCase();
+  // ⌘⌥0 : texte normal ; ⌘⌥1 à 3 : titres 1 à 3 (comme Google Docs).
+  if (event.altKey && /^Digit[0-4]$/.test(event.code)) {
+    event.preventDefault();
+    const n = Number(event.code.slice(5));
+    applyStyle(n === 0 ? "normal" : n === 4 ? "title" : styleOfLevel(n + 1));
+    return;
+  }
+  if (key === "s") {
     event.preventDefault();
     if (event.shiftKey) saveFileAs();
     else saveFile();
-  } else if (event.key === "p") {
+  } else if (key === "p" && !event.shiftKey) {
     event.preventDefault();
     printDocument();
-  } else if (event.key === "n") {
+  } else if (key === "n" && !event.shiftKey) {
     event.preventDefault();
     newFile();
-  } else if (event.key === "o") {
+  } else if (key === "o" && event.shiftKey) {
+    event.preventDefault();
+    setPanelVisible(sidePanel.hidden);
+  } else if (key === "o") {
     event.preventDefault();
     openFile();
-  } else if (event.key === "f") {
+  } else if (key === "f") {
     event.preventDefault();
     openFind();
-  } else if (event.key === "O" && event.shiftKey) {
+  } else if (key === "c" && event.shiftKey) {
     event.preventDefault();
-    toggleOutline();
-  } else if (event.key === "k") {
+    openCountDialog();
+  } else if (key === "k") {
     event.preventDefault();
     openLinkDialog();
   } else if (event.key === "\\") {
     event.preventDefault();
     actions.clearFormat();
+  } else if (event.shiftKey && (event.key === ">" || event.key === ".")) {
+    event.preventDefault();
+    actions.sizeUp();
+  } else if (event.shiftKey && (event.key === "<" || event.key === ",")) {
+    event.preventDefault();
+    actions.sizeDown();
   }
 });
 
+// Un clic sur le bureau gris (sous la dernière page) remet le curseur à la fin.
+desk.addEventListener("mousedown", (event) => {
+  if (event.target === desk) {
+    event.preventDefault();
+    editor.commands.focus("end");
+  }
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeMenus();
+});
+
+// --- Démarrage -----------------------------------------------------------------------
+
+tabs.load([{ title: "Onglet 1", document: editor.getJSON() }]);
+setStyles(styles, false);
+applyPageSetup();
+setZoom(zoom);
+setPanelVisible(prefs.get("panel", "1") === "1");
 refreshToolbar();
 toolbar.querySelector('[data-action="spellcheck"]')?.classList.add("active");
-updateWordCount();
+updateCounts();
 restoreSession();
 
 // En développement, l'éditeur est accessible depuis la console (`editor`).
-if (import.meta.env.DEV) (window as unknown as { editor: Editor }).editor = editor;
+if (import.meta.env.DEV) (window as unknown as { editor: Editor; tabs: TabTree }).editor = editor;
+if (import.meta.env.DEV) (window as unknown as { tabs: TabTree }).tabs = tabs;

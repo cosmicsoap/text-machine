@@ -11,11 +11,13 @@ mod session;
 use session::Session;
 use tauri::AppHandle;
 use tm_io_native::NativeFile;
-use tm_model::{Document, PageSetup};
+use tm_model::{Document, PageSetup, StyleSheet, TextStats};
 
+/// Mots et signes d'un document (ou d'une sélection, envoyée comme un
+/// petit document).
 #[tauri::command]
-fn word_count(doc: Document) -> usize {
-    doc.word_count()
+fn text_stats(doc: Document) -> TextStats {
+    doc.stats()
 }
 
 #[tauri::command]
@@ -26,11 +28,7 @@ fn open_document(app: AppHandle, path: String) -> Result<NativeFile, String> {
 }
 
 #[tauri::command]
-fn save_document(app: AppHandle, path: String, doc: Document, page: PageSetup) -> Result<(), String> {
-    let file = NativeFile {
-        document: doc,
-        page,
-    };
+fn save_document(app: AppHandle, path: String, file: NativeFile) -> Result<(), String> {
     formats::write(&path, &file)?;
     remember(&app, &path);
     Ok(())
@@ -59,11 +57,7 @@ fn forget_last_file(app: AppHandle) -> Result<(), String> {
 
 /// Enregistre le document sans titre dans le brouillon.
 #[tauri::command]
-fn save_draft(app: AppHandle, doc: Document, page: PageSetup) -> Result<(), String> {
-    let file = NativeFile {
-        document: doc,
-        page,
-    };
+fn save_draft(app: AppHandle, file: NativeFile) -> Result<(), String> {
     tm_io_native::save(session::draft_path(&app)?, &file).map_err(|e| e.to_string())
 }
 
@@ -80,8 +74,17 @@ fn print_document(webview: tauri::Webview) -> Result<(), String> {
 
 /// Exporte une copie (Word, Markdown, texte…) sans changer le fichier ouvert.
 #[tauri::command]
-fn export_document(path: String, doc: Document, page: PageSetup) -> Result<(), String> {
-    formats::write(&path, &NativeFile { document: doc, page })
+fn export_document(path: String, file: NativeFile) -> Result<(), String> {
+    formats::write(&path, &file)
+}
+
+/// « Enregistrer comme styles par défaut » : les nouveaux documents les
+/// prendront.
+#[tauri::command]
+fn save_default_styles(app: AppHandle, styles: Option<StyleSheet>) -> Result<(), String> {
+    let mut s = session::load(&app);
+    s.default_styles = styles;
+    session::store(&app, &s)
 }
 
 /// Enregistre la page affichée en PDF, sans passer par l'impression.
@@ -100,7 +103,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            word_count,
+            text_stats,
+            save_default_styles,
             open_document,
             save_document,
             load_session,

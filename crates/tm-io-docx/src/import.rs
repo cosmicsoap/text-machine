@@ -11,8 +11,8 @@ use base64::Engine;
 use serde_json::Value;
 use tm_model::{
     Block, BlockStyle, CellAttrs, Document, HeadingAttrs, HighlightAttrs, ImageAttrs, Inline,
-    LinkAttrs, Mark, Margins, OrderedListAttrs, PageSetup, PageSize, TaskItemAttrs,
-    TextStyleAttrs,
+    LinkAttrs, Margins, Mark, OrderedListAttrs, PageSetup, PageSize, ParagraphStyle, StyleSheet,
+    TabTitleAttrs, TaskItemAttrs, TextStyleAttrs, MAX_TAB_LEVEL,
 };
 
 use crate::DocxError;
@@ -20,26 +20,94 @@ use crate::DocxError;
 const TWIPS_PER_MM: f64 = 1440.0 / 25.4;
 const EMU_PER_PX: f64 = 9525.0;
 
-/// Lit un fichier `.docx` : le document et sa mise en page.
-pub fn import(bytes: &[u8]) -> Result<(Document, PageSetup), DocxError> {
+/// Ce qu'on lit dans un fichier Word.
+pub type Imported = (Document, PageSetup, StyleSheet);
+
+/// Lit un fichier `.docx` : le document (avec ses titres d'onglet), sa mise
+/// en page et ses styles de paragraphe.
+pub fn import(bytes: &[u8]) -> Result<Imported, DocxError> {
     let docx = docx_rs::read_docx(bytes).map_err(|e| DocxError::Docx(e.to_string()))?;
-    let json: Value = serde_json::from_str(&docx.json()).map_err(|e| DocxError::Docx(e.to_string()))?;
+    let json: Value =
+        serde_json::from_str(&docx.json()).map_err(|e| DocxError::Docx(e.to_string()))?;
     let reader = Reader::new(&json);
     let mut out = Vec::new();
     reader.blocks(&json["document"]["children"], &mut out);
     let content = group_lists(out);
     let page = reader.page_setup(&json["document"]["sectionProperty"]);
-    Ok((Document::new(content), page))
+    let styles = read_styles(&json["styles"], &reader.headings);
+    Ok((Document::new(content), page, styles))
+}
+
+/// Les styles « Normal », « Title » et « heading 1 à 3 » du fichier,
+/// convertis en feuille de styles. Ce que le fichier ne précise pas garde
+/// la valeur par défaut de Text Machine.
+fn read_styles(styles: &Value, headings: &HashMap<String, u8>) -> StyleSheet {
+    let mut sheet = StyleSheet::default();
+    let defaults = &styles["docDefaults"];
+    apply_word_style(
+        &mut sheet.normal,
+        &defaults["runPropertyDefault"]["runProperty"],
+        &defaults["paragraphPropertyDefault"]["paragraphProperty"],
+    );
+    let mut seen = [false; 5];
+    for style in styles["styles"].as_array().into_iter().flatten() {
+        let id = style["styleId"].as_str().unwrap_or_default();
+        let (run, para) = (&style["runProperty"], &style["paragraphProperty"]);
+        if id == "Normal" {
+            apply_word_style(&mut sheet.normal, run, para);
+        } else if let Some(&level) = headings.get(id) {
+            // Plusieurs styles peuvent donner le même niveau : le premier gagne.
+            if !std::mem::replace(&mut seen[level as usize], true) {
+                apply_word_style(sheet.heading_mut(level), run, para);
+            }
+        }
+    }
+    sheet
+}
+
+fn apply_word_style(style: &mut ParagraphStyle, run: &Value, para: &Value) {
+    if let Some(font) = run["fonts"]["ascii"].as_str() {
+        style.font_family = Some(font.to_string());
+    }
+    if let Some(sz) = run["sz"].as_u64() {
+        style.font_size = sz as f64 / 2.0;
+    }
+    if let Some(b) = run["bold"].as_bool() {
+        style.bold = b;
+    }
+    if let Some(i) = run["italic"].as_bool() {
+        style.italic = i;
+    }
+    if let Some(c) = run["color"]
+        .as_str()
+        .filter(|c| c.len() == 6 && *c != "000000")
+    {
+        style.color = Some(format!("#{}", c.to_lowercase()));
+    }
+    let ls = &para["lineSpacing"];
+    if ls["lineRule"].as_str().unwrap_or("auto") == "auto" {
+        if let Some(line) = ls["line"].as_f64().filter(|l| *l > 0.0) {
+            style.line_height = (line / 240.0 * 100.0).round() / 100.0;
+        }
+    }
+    if let Some(before) = ls["before"].as_f64() {
+        style.space_before = before / 20.0;
+    }
+    if let Some(after) = ls["after"].as_f64() {
+        style.space_after = after / 20.0;
+    }
 }
 
 /// Lit un fichier `.docx` sur le disque.
-pub fn open(path: impl AsRef<std::path::Path>) -> Result<(Document, PageSetup), DocxError> {
+pub fn open(path: impl AsRef<std::path::Path>) -> Result<Imported, DocxError> {
     import(&std::fs::read(path)?)
 }
 
 struct Reader {
     /// Identifiant de style → niveau de titre (1 = « Titre »).
     headings: HashMap<String, u8>,
+    /// Identifiant de style → niveau d'onglet (styles « TMTab1 »…).
+    tab_styles: HashMap<String, u8>,
     /// Numérotation → (identifiant de liste, format par niveau).
     numberings: HashMap<u64, Vec<String>>,
     images: HashMap<String, String>,
@@ -51,8 +119,16 @@ struct Reader {
 /// Un bloc lu, avant de regrouper les éléments de liste.
 enum Item {
     Block(Block),
-    ListPara { num: u64, level: usize, ordered: bool, para: Block },
-    Task { checked: bool, para: Block },
+    ListPara {
+        num: u64,
+        level: usize,
+        ordered: bool,
+        para: Block,
+    },
+    Task {
+        checked: bool,
+        para: Block,
+    },
     /// Paragraphe de citation (trait à gauche).
     Quote(Block),
 }
@@ -60,8 +136,16 @@ enum Item {
 impl Reader {
     fn new(json: &Value) -> Self {
         let mut headings = HashMap::new();
+        let mut tab_styles = HashMap::new();
         for style in json["styles"]["styles"].as_array().into_iter().flatten() {
             let id = style["styleId"].as_str().unwrap_or_default().to_string();
+            if let Some(level) = id
+                .strip_prefix(crate::TAB_STYLE_PREFIX)
+                .and_then(|n| n.parse::<u8>().ok())
+            {
+                tab_styles.insert(id, level.clamp(1, MAX_TAB_LEVEL));
+                continue;
+            }
             let name = style["name"].as_str().unwrap_or_default().to_lowercase();
             let level = if name == "title" || id == "Title" {
                 Some(1)
@@ -111,6 +195,7 @@ impl Reader {
         let defaults = &json["styles"]["docDefaults"]["runPropertyDefault"]["runProperty"];
         Self {
             headings,
+            tab_styles,
             numberings,
             images,
             links,
@@ -154,7 +239,9 @@ impl Reader {
                 }
             }
         }
-        let numbering = prop["numberingProperty"]["id"].as_u64().filter(|id| *id != 0);
+        let numbering = prop["numberingProperty"]["id"]
+            .as_u64()
+            .filter(|id| *id != 0);
         if numbering.is_none() {
             let start = prop["indent"]["start"].as_f64().unwrap_or(0.0);
             let steps = (start / 720.0).round() as i64;
@@ -162,7 +249,28 @@ impl Reader {
                 style.indent = Some(steps.min(8) as u8);
             }
         }
-        let heading = prop["style"].as_str().and_then(|s| self.headings.get(s)).copied();
+        // Titre d'onglet : seulement son texte.
+        if let Some(&level) = prop["style"].as_str().and_then(|s| self.tab_styles.get(s)) {
+            let (mut inlines, mut pieces) = (Vec::new(), Vec::new());
+            for child in data["children"].as_array().into_iter().flatten() {
+                self.paragraph_child(child, &[], &mut inlines, &mut pieces);
+            }
+            let title = Document::new(vec![Block::Paragraph {
+                attrs: BlockStyle::default(),
+                content: inlines,
+            }])
+            .plain_text()
+            .trim()
+            .to_string();
+            out.push(Item::Block(Block::TabTitle {
+                attrs: TabTitleAttrs { level, title },
+            }));
+            return;
+        }
+        let heading = prop["style"]
+            .as_str()
+            .and_then(|s| self.headings.get(s))
+            .copied();
         // Une citation : trait à gauche, sans numérotation ni titre.
         let quote = numbering.is_none()
             && heading.is_none()
@@ -170,7 +278,10 @@ impl Reader {
                 .as_str()
                 .is_some_and(|v| !matches!(v, "nil" | "none"));
         if quote {
-            style.indent = style.indent.and_then(|n| n.checked_sub(1)).filter(|n| *n > 0);
+            style.indent = style
+                .indent
+                .and_then(|n| n.checked_sub(1))
+                .filter(|n| *n > 0);
         }
 
         // Le texte, découpé aux images et aux sauts de page (qui sont des blocs).
@@ -218,15 +329,24 @@ impl Reader {
                     }
                     let para = make(content);
                     let item = match (task, numbering) {
-                        (Some(checked), _) => Item::Task { checked, para: strip_indent(para) },
+                        (Some(checked), _) => Item::Task {
+                            checked,
+                            para: strip_indent(para),
+                        },
                         (None, Some(num)) => {
-                            let level = prop["numberingProperty"]["level"].as_u64().unwrap_or(0) as usize;
+                            let level =
+                                prop["numberingProperty"]["level"].as_u64().unwrap_or(0) as usize;
                             let ordered = self
                                 .numberings
                                 .get(&num)
                                 .and_then(|f| f.get(level))
                                 .is_some_and(|f| f != "bullet" && f != "none");
-                            Item::ListPara { num, level, ordered, para }
+                            Item::ListPara {
+                                num,
+                                level,
+                                ordered,
+                                para,
+                            }
                         }
                         _ if quote => Item::Quote(unquote_color(para)),
                         _ => Item::Block(para),
@@ -239,7 +359,13 @@ impl Reader {
         }
     }
 
-    fn paragraph_child(&self, child: &Value, marks: &[Mark], inlines: &mut Vec<Inline>, pieces: &mut Vec<Piece>) {
+    fn paragraph_child(
+        &self,
+        child: &Value,
+        marks: &[Mark],
+        inlines: &mut Vec<Inline>,
+        pieces: &mut Vec<Piece>,
+    ) {
         let data = &child["data"];
         match child["type"].as_str() {
             Some("run") => self.run(data, marks, inlines, pieces),
@@ -268,7 +394,13 @@ impl Reader {
         }
     }
 
-    fn run(&self, data: &Value, outer: &[Mark], inlines: &mut Vec<Inline>, pieces: &mut Vec<Piece>) {
+    fn run(
+        &self,
+        data: &Value,
+        outer: &[Mark],
+        inlines: &mut Vec<Inline>,
+        pieces: &mut Vec<Piece>,
+    ) {
         let in_link = outer.iter().any(|m| matches!(m, Mark::Link { .. }));
         let mut marks = outer.to_vec();
         marks.extend(self.run_marks(&data["runProperty"], in_link));
@@ -326,7 +458,10 @@ impl Reader {
         }
 
         let mut style = TextStyleAttrs::default();
-        if let Some(font) = rp["fonts"]["ascii"].as_str().or(rp["fonts"]["hiAnsi"].as_str()) {
+        if let Some(font) = rp["fonts"]["ascii"]
+            .as_str()
+            .or(rp["fonts"]["hiAnsi"].as_str())
+        {
             if Some(font) != self.default_font.as_deref() {
                 style.font_family = Some(font.to_string());
             }
@@ -360,7 +495,9 @@ impl Reader {
     fn image(&self, drawing: &Value) -> Option<Block> {
         let pic = &drawing["data"];
         let data = self.images.get(pic["id"].as_str()?)?;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(data).ok()?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .ok()?;
         let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
             "image/png"
         } else if bytes.starts_with(&[0xFF, 0xD8]) {
@@ -370,8 +507,12 @@ impl Reader {
         } else {
             return None;
         };
-        let width = pic["size"][0].as_f64().map(|emu| (emu / EMU_PER_PX).round());
-        let height = pic["size"][1].as_f64().map(|emu| (emu / EMU_PER_PX).round());
+        let width = pic["size"][0]
+            .as_f64()
+            .map(|emu| (emu / EMU_PER_PX).round());
+        let height = pic["size"][1]
+            .as_f64()
+            .map(|emu| (emu / EMU_PER_PX).round());
         Some(Block::Image {
             attrs: ImageAttrs {
                 src: format!("data:{mime};base64,{data}"),
@@ -406,7 +547,10 @@ impl Reader {
                     colspan: d["property"]["gridSpan"].as_u64().unwrap_or(1).max(1) as u32,
                     ..CellAttrs::default()
                 };
-                let header = r == 0 && d["property"]["shading"]["fill"].as_str().is_some_and(|f| f != "auto");
+                let header = r == 0
+                    && d["property"]["shading"]["fill"]
+                        .as_str()
+                        .is_some_and(|f| f != "auto");
                 cells.push(if header {
                     // Le gras de l'en-tête vient du style de la cellule.
                     Block::TableHeader {
@@ -430,7 +574,11 @@ impl Reader {
             let (short, long) = (w.min(h), w.max(h));
             let letter = (short - 215.9).abs() + (long - 279.4).abs();
             let a4 = (short - 210.0).abs() + (long - 297.0).abs();
-            page.size = if letter < a4 { PageSize::Letter } else { PageSize::A4 };
+            page.size = if letter < a4 {
+                PageSize::Letter
+            } else {
+                PageSize::A4
+            };
         }
         let m = &section["pageMargin"];
         let default = Margins::default();
@@ -454,7 +602,11 @@ fn push_text(inlines: &mut Vec<Inline>, text: &str, marks: &[Mark]) {
     if text.is_empty() {
         return;
     }
-    if let Some(Inline::Text { text: prev, marks: pm }) = inlines.last_mut() {
+    if let Some(Inline::Text {
+        text: prev,
+        marks: pm,
+    }) = inlines.last_mut()
+    {
         if pm == marks {
             prev.push_str(text);
             return;
@@ -516,7 +668,8 @@ fn unquote_color(block: Block) -> Block {
                                     if attrs.color.as_deref() == Some("#5f6670") {
                                         attrs.color = None;
                                     }
-                                    (attrs != TextStyleAttrs::default()).then_some(Mark::TextStyle { attrs })
+                                    (attrs != TextStyleAttrs::default())
+                                        .then_some(Mark::TextStyle { attrs })
                                 }
                                 other => Some(other),
                             })
@@ -575,16 +728,30 @@ fn group_lists(items: Vec<Item>) -> Vec<Block> {
                 }
                 out.push(Block::TaskList { content });
             }
-            Item::ListPara { num, level, ordered, para } => {
+            Item::ListPara {
+                num,
+                level,
+                ordered,
+                para,
+            } => {
                 let top = level;
                 let mut run = vec![(level, ordered, para)];
                 // Une sous-liste peut avoir sa propre numérotation : elle reste
                 // dans la liste tant qu'elle est plus indentée.
-                while let Some(Item::ListPara { num: n, level: l, .. }) = iter.peek() {
+                while let Some(Item::ListPara {
+                    num: n, level: l, ..
+                }) = iter.peek()
+                {
                     if *n != num && *l <= top {
                         break;
                     }
-                    if let Some(Item::ListPara { level, ordered, para, .. }) = iter.next() {
+                    if let Some(Item::ListPara {
+                        level,
+                        ordered,
+                        para,
+                        ..
+                    }) = iter.next()
+                    {
                         run.push((level, ordered, para));
                     }
                 }
@@ -636,7 +803,9 @@ fn build_list(run: &mut Vec<(usize, bool, Block)>, pos: &mut usize, level: usize
                 content: vec![],
             },
         );
-        items.push(Block::ListItem { content: vec![para] });
+        items.push(Block::ListItem {
+            content: vec![para],
+        });
         *pos += 1;
     }
     if ordered {

@@ -1,5 +1,9 @@
 //! Choix du format d'après l'extension du fichier.
 //!
+//! Word, Markdown et texte ne connaissent pas les onglets : ils y sont mis
+//! à la suite, chacun précédé de son titre (style Word « TM Onglet »,
+//! commentaire Markdown), et redécoupés à l'ouverture.
+//!
 //! - `.docx` : format principal (Word), lu et écrit.
 //! - `.md` / `.markdown` : Markdown, lu et écrit (sans couleurs ni polices).
 //!   Les images sont enregistrées à côté, dans un dossier
@@ -13,7 +17,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 
 use tm_io_native::NativeFile;
-use tm_model::PageSetup;
+use tm_model::{PageSetup, StyleSheet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -42,8 +46,8 @@ impl Format {
 pub fn read(path: &str) -> Result<NativeFile, String> {
     match Format::of(path) {
         Format::Docx => {
-            let (document, page) = tm_io_docx::open(path).map_err(|e| e.to_string())?;
-            Ok(NativeFile { document, page })
+            let (document, page, styles) = tm_io_docx::open(path).map_err(|e| e.to_string())?;
+            Ok(NativeFile::from_flat(document, page, styles))
         }
         Format::Markdown | Format::Text => {
             let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
@@ -55,10 +59,11 @@ pub fn read(path: &str) -> Result<NativeFile, String> {
             } else {
                 tm_io_markdown::import_plain_text(&text)
             };
-            Ok(NativeFile {
+            Ok(NativeFile::from_flat(
                 document,
-                page: PageSetup::default(),
-            })
+                PageSetup::default(),
+                StyleSheet::default(),
+            ))
         }
         Format::Native => tm_io_native::open(path).map_err(|e| e.to_string()),
     }
@@ -66,13 +71,14 @@ pub fn read(path: &str) -> Result<NativeFile, String> {
 
 pub fn write(path: &str, file: &NativeFile) -> Result<(), String> {
     let bytes = match Format::of(path) {
-        Format::Docx => tm_io_docx::export(&file.document, &file.page).map_err(|e| e.to_string())?,
+        Format::Docx => tm_io_docx::export(&file.flattened(), &file.page, &file.styles)
+            .map_err(|e| e.to_string())?,
         Format::Markdown => {
-            let mut doc = file.document.clone();
+            let mut doc = file.flattened();
             save_images(path, &mut doc)?;
             tm_io_markdown::export(&doc).into_bytes()
         }
-        Format::Text => tm_io_markdown::export_plain_text(&file.document).into_bytes(),
+        Format::Text => tm_io_markdown::export_plain_text(&file.flattened()).into_bytes(),
         Format::Native => return tm_io_native::save(path, file).map_err(|e| e.to_string()),
     };
     // Fichier temporaire puis renommage : jamais de fichier à moitié écrit.
@@ -88,7 +94,10 @@ const BASE64: base64::engine::GeneralPurpose = base64::engine::general_purpose::
 /// Dossier des images d'un fichier Markdown : « notes.md » → « notes_images ».
 fn images_dir(md_path: &str) -> (PathBuf, String) {
     let path = Path::new(md_path);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("document");
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("document");
     let name = format!("{stem}_images");
     (path.with_file_name(&name), name)
 }
@@ -107,7 +116,9 @@ fn save_images(md_path: &str, doc: &mut tm_model::Document) -> Result<(), String
         else {
             return;
         };
-        let Ok(bytes) = BASE64.decode(data.trim()) else { return };
+        let Ok(bytes) = BASE64.decode(data.trim()) else {
+            return;
+        };
         count += 1;
         let ext = match mime {
             "image/jpeg" | "image/jpg" => "jpg",
@@ -117,7 +128,8 @@ fn save_images(md_path: &str, doc: &mut tm_model::Document) -> Result<(), String
             _ => "png",
         };
         let file = format!("image{count}.{ext}");
-        let written = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&file), bytes));
+        let written =
+            std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&file), bytes));
         match written {
             Ok(()) => image.src = format!("{}/{file}", dir_name.replace(' ', "%20")),
             Err(e) => error = Some(e.to_string()),
@@ -136,8 +148,14 @@ fn load_images(md_path: &str, doc: &mut tm_model::Document) {
             return; // adresse web, data: ou chemin absolu : on la laisse.
         }
         let file = base.join(&src);
-        let Ok(bytes) = std::fs::read(&file) else { return };
-        let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let Ok(bytes) = std::fs::read(&file) else {
+            return;
+        };
+        let ext = file
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
         let mime = match ext.as_str() {
             "jpg" | "jpeg" => "image/jpeg",
             "gif" => "image/gif",
@@ -174,7 +192,38 @@ mod tests {
             write(&path, &file).unwrap();
             let back = read(&path).unwrap();
             std::fs::remove_file(&path).ok();
-            assert_eq!(back.document.plain_text(), doc.plain_text(), "format {ext}");
+            assert_eq!(
+                back.flattened().plain_text(),
+                doc.plain_text(),
+                "format {ext}"
+            );
+        }
+    }
+
+    #[test]
+    fn onglets_dans_chaque_format() {
+        use tm_model::Tab;
+        let mut first = Tab::new("Un", Document::new(vec![Block::paragraph("a")]));
+        first
+            .children
+            .push(Tab::new("Deux", Document::new(vec![Block::paragraph("b")])));
+        let file = NativeFile {
+            tabs: vec![
+                first,
+                Tab::new("Trois", Document::new(vec![Block::paragraph("c")])),
+            ],
+            page: PageSetup::default(),
+            styles: StyleSheet::default(),
+        };
+        for ext in ["docx", "md", "tmd"] {
+            let path = std::env::temp_dir()
+                .join(format!("tm-onglets-{}.{ext}", std::process::id()))
+                .to_string_lossy()
+                .into_owned();
+            write(&path, &file).unwrap();
+            let back = read(&path).unwrap();
+            std::fs::remove_file(&path).ok();
+            assert_eq!(back.tabs, file.tabs, "format {ext}");
         }
     }
 
@@ -183,7 +232,13 @@ mod tests {
         use tm_model::ImageAttrs;
         let src = "data:image/png;base64,iVBORw0KGgo=".to_string();
         let doc = Document::new(vec![Block::Image {
-            attrs: ImageAttrs { src: src.clone(), alt: Some("logo".into()), title: None, width: None, height: None },
+            attrs: ImageAttrs {
+                src: src.clone(),
+                alt: Some("logo".into()),
+                title: None,
+                width: None,
+                height: None,
+            },
         }]);
         let dir = std::env::temp_dir().join(format!("tm-md-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -194,6 +249,6 @@ mod tests {
         assert!(dir.join("Mon doc_images/image1.png").exists());
         let back = read(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
-        assert_eq!(back.document, doc);
+        assert_eq!(back.flattened(), doc);
     }
 }

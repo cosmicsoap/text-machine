@@ -21,6 +21,8 @@ pub struct Session {
     pub recent: Vec<String>,
     /// Fichier ouvert à la fermeture (aucun : on reprend le brouillon).
     pub last_file: Option<String>,
+    /// Styles de paragraphe choisis pour les nouveaux documents.
+    pub default_styles: Option<tm_model::StyleSheet>,
 }
 
 impl Session {
@@ -35,7 +37,11 @@ impl Session {
     /// Retire les fichiers qui n'existent plus.
     pub fn prune(&mut self) {
         self.recent.retain(|p| Path::new(p).exists());
-        if self.last_file.as_deref().is_some_and(|p| !Path::new(p).exists()) {
+        if self
+            .last_file
+            .as_deref()
+            .is_some_and(|p| !Path::new(p).exists())
+        {
             self.last_file = None;
         }
     }
