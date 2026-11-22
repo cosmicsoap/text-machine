@@ -48,5 +48,16 @@
         "displayLanguageSelector": false
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDODdBRjAyMDcxQTY5RjEKUldUeGFSb0hBcStIN0tPeGVCdUZCUnZJdFY2dXNUWTBYMHJEaGhFY2tMNzNWcFFwNmdPZml5eksK",
+      "endpoints": [
+        "https://github.com/cosmicsoap/text-machine/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

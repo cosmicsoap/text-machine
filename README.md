@@ -122,6 +122,21 @@ xattr -dr com.apple.quarantine "/Applications/Text Machine.app"
 Sur Windows, les raccourcis utilisent **Ctrl** à la place de **⌘**
 (Ctrl+S pour enregistrer, Ctrl+B pour le gras…).
 
+## Mises à jour
+
+Une fois Text Machine installé, plus besoin de retélécharger le `.dmg` ou le
+`.exe` : au lancement, l'application regarde s'il existe une version plus
+récente et propose de l'installer (« Installer » ou « Plus tard »). Le
+document est enregistré, la mise à jour est téléchargée, puis l'application
+redémarre toute seule. On peut aussi vérifier à la main : menu **Fichier >
+Rechercher des mises à jour…**.
+
+Chaque mise à jour est signée avec la clé de Text Machine (secret
+`TAURI_SIGNING_PRIVATE_KEY` du dépôt, dans Settings > Secrets and variables
+> Actions) : l'application refuse toute mise à jour qui ne vient pas de là.
+Sans ce secret, les applications sont fabriquées comme avant, mais sans
+mise à jour automatique.
+
 ## Lancer l'application sur Mac (pour développer)
 
 ### 1. Installer les outils (une seule fois)
