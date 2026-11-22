@@ -18,6 +18,45 @@ export interface ParagraphStyle {
   /** Espace avant et après le paragraphe, en points. */
   spaceBefore: number;
   spaceAfter: number;
+  /** Graisse de 100 à 900 ; absente : 400, ou 700 si `bold`. */
+  fontWeight?: number | null;
+  underline?: boolean;
+  strike?: boolean;
+  /** Couleur de surlignage `#rrggbb`. */
+  highlight?: string | null;
+  /** Espacement des lettres, en points. */
+  letterSpacing?: number | null;
+  smallCaps?: boolean;
+  verticalAlign?: "super" | "sub" | null;
+  textTransform?: "uppercase" | "lowercase" | "capitalize" | null;
+  textAlign?: "left" | "center" | "right" | "justify" | null;
+  /** Retraits en centimètres (première ligne négative : retrait suspendu). */
+  indentLeft?: number | null;
+  indentRight?: number | null;
+  firstLineIndent?: number | null;
+}
+
+/** Graisse effective d'un style. */
+export const weightOf = (s: ParagraphStyle) => s.fontWeight ?? (s.bold ? 700 : 400);
+
+/** Noms des graisses, comme les fondeurs les écrivent. */
+export const WEIGHT_NAMES: Record<number, string> = {
+  100: "Thin",
+  200: "ExtraLight",
+  300: "Light",
+  400: "Regular",
+  500: "Medium",
+  600: "SemiBold",
+  700: "Bold",
+  800: "ExtraBold",
+  900: "Black",
+};
+
+/** « Light », « SemiBold Italique »… */
+export function faceName(weight: number, italic: boolean) {
+  const w = WEIGHT_NAMES[Math.round(weight / 100) * 100] ?? String(weight);
+  if (!italic) return w;
+  return w === "Regular" ? "Italique" : `${w} Italique`;
 }
 
 export type StyleKey = "normal" | "title" | "heading1" | "heading2" | "heading3";
@@ -26,7 +65,7 @@ export type StyleKey = "normal" | "title" | "heading1" | "heading2" | "heading3"
 export interface CustomStyle {
   id: string;
   name: string;
-  /** Un style de caractère n'utilise que police, taille, gras, italique, couleur. */
+  /** Un style de caractère n'utilise que la mise en forme des caractères. */
   kind: "paragraph" | "character";
   style: ParagraphStyle;
 }
@@ -129,16 +168,28 @@ export const cssFont = (font: string) => (/^[\w-]+$/.test(font) ? font : `"${fon
 function declarations(sheet: StyleSheet, ref: StyleRef) {
   const s = getStyle(sheet, ref);
   const character = findCustom(sheet, ref)?.kind === "character";
+  const deco = [s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ");
+  const size = s.verticalAlign ? s.fontSize * 0.65 : s.fontSize;
   return [
     // Un style de caractère sans police garde celle du paragraphe.
     character && !s.fontFamily ? "" : `font-family: ${cssFont(fontOf(sheet, ref))}, Georgia, serif`,
-    `font-size: ${s.fontSize}pt`,
-    `font-weight: ${s.bold ? "bold" : "normal"}`,
+    `font-size: ${+size.toFixed(2)}pt`,
+    `font-weight: ${weightOf(s)}`,
     `font-style: ${s.italic ? "italic" : "normal"}`,
     // Le texte normal hérite sa couleur (une citation reste grise).
     ref === "normal" || character ? (s.color ? `color: ${s.color}` : "") : `color: ${s.color || "#000000"}`,
+    deco ? `text-decoration: ${deco}` : "",
+    s.highlight ? `background-color: ${s.highlight}` : "",
+    s.letterSpacing ? `letter-spacing: ${s.letterSpacing}pt` : "",
+    s.smallCaps ? "font-variant-caps: small-caps" : "",
+    s.verticalAlign ? `vertical-align: ${s.verticalAlign}` : "",
+    s.textTransform ? `text-transform: ${s.textTransform}` : "",
     character ? "" : `line-height: ${s.lineHeight}`,
-    character ? "" : `margin: ${s.spaceBefore}pt 0 ${s.spaceAfter}pt`,
+    character ? "" : `margin: ${s.spaceBefore}pt ${s.indentRight ?? 0}cm ${s.spaceAfter}pt ${s.indentLeft ?? 0}cm`,
+    !character && s.textAlign ? `text-align: ${s.textAlign}` : "",
+    !character && s.firstLineIndent ? `text-indent: ${s.firstLineIndent}cm` : "",
+    // Retrait suspendu : la première ligne déborde à gauche.
+    !character && (s.firstLineIndent ?? 0) < 0 && !s.indentLeft ? `padding-left: ${-s.firstLineIndent!}cm` : "",
   ]
     .filter(Boolean)
     .join("; ");
@@ -169,5 +220,6 @@ export function stylesToCss(sheet: StyleSheet, scope = "#editor .tiptap") {
 /** Aperçu d'un style dans les listes de styles. */
 export function previewCss(sheet: StyleSheet, ref: StyleRef) {
   const s = getStyle(sheet, ref);
-  return `font-family: ${cssFont(fontOf(sheet, ref))}, Georgia, serif; font-size: ${Math.min(s.fontSize, 20)}pt; font-weight: ${s.bold ? "bold" : "normal"}; font-style: ${s.italic ? "italic" : "normal"}; color: ${s.color || "#000000"};`;
+  const deco = [s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none";
+  return `font-family: ${cssFont(fontOf(sheet, ref))}, Georgia, serif; font-size: ${Math.min(s.fontSize, 20)}pt; font-weight: ${weightOf(s)}; font-style: ${s.italic ? "italic" : "normal"}; color: ${s.color || "#000000"}; text-decoration: ${deco}; ${s.highlight ? `background-color: ${s.highlight};` : ""} ${s.smallCaps ? "font-variant-caps: small-caps;" : ""} ${s.textTransform ? `text-transform: ${s.textTransform};` : ""} ${s.letterSpacing ? `letter-spacing: ${s.letterSpacing}pt;` : ""}`;
 }

@@ -24,7 +24,35 @@ pub struct ImportedFont {
     pub index: u32,
     /// Graisse CSS (400 = normal, 700 = gras).
     pub weight: u16,
+    /// Graisse maximale d'une police variable (sinon égale à `weight`).
+    pub weight_max: u16,
     pub italic: bool,
+}
+
+/// Une forme d'une famille : une graisse (ou une plage, pour une police
+/// variable) et un style droit ou italique.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct FontFace {
+    pub weight: u16,
+    pub weight_max: u16,
+    pub italic: bool,
+}
+
+/// Une famille de polices et ses formes (Light, Regular, Bold, Italique…).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FontFamily {
+    pub family: String,
+    pub faces: Vec<FontFace>,
+}
+
+/// Une police lue dans un fichier.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Described {
+    pub index: u32,
+    pub family: String,
+    pub face: FontFace,
 }
 
 pub fn is_font_file(path: &Path) -> bool {
@@ -51,13 +79,29 @@ fn font_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 }
 
 /// Les polices contenues dans un fichier (plusieurs pour un .ttc).
-pub fn describe(data: &[u8]) -> Vec<(u32, String, u16, bool)> {
+pub fn describe(data: &[u8]) -> Vec<Described> {
     let count = ttf_parser::fonts_in_collection(data).unwrap_or(1);
     (0..count)
         .filter_map(|index| {
             let face = ttf_parser::Face::parse(data, index).ok()?;
             let family = family_name(&face)?;
-            Some((index, family, face.weight().to_number(), face.is_italic()))
+            let mut weight = face.weight().to_number();
+            let mut weight_max = weight;
+            // Police variable : toute une plage de graisses dans un fichier.
+            let wght = ttf_parser::Tag::from_bytes(b"wght");
+            if let Some(axis) = face.variation_axes().into_iter().find(|a| a.tag == wght) {
+                weight = axis.min_value.round().clamp(1.0, 1000.0) as u16;
+                weight_max = axis.max_value.round().clamp(1.0, 1000.0) as u16;
+            }
+            Some(Described {
+                index,
+                family,
+                face: FontFace {
+                    weight,
+                    weight_max,
+                    italic: face.is_italic(),
+                },
+            })
         })
         .collect()
 }
@@ -75,8 +119,8 @@ fn family_name(face: &ttf_parser::Face) -> Option<String> {
     find(TYPOGRAPHIC_FAMILY).or_else(|| find(FAMILY))
 }
 
-/// Familles des polices installées sur l'ordinateur.
-pub fn system_families() -> Vec<String> {
+/// Familles des polices installées sur l'ordinateur, avec leurs formes.
+pub fn system_families() -> Vec<FontFamily> {
     let mut dirs = vec![
         PathBuf::from("/System/Library/Fonts"),
         PathBuf::from("/Library/Fonts"),
@@ -91,19 +135,25 @@ pub fn system_families() -> Vec<String> {
     for dir in dirs {
         font_files(&dir, 0, &mut files);
     }
-    let mut families = BTreeSet::new();
+    let mut families: std::collections::BTreeMap<String, BTreeSet<FontFace>> = Default::default();
     for file in files {
         let Ok(data) = std::fs::read(&file) else {
             continue;
         };
-        for (_, family, _, _) in describe(&data) {
+        for d in describe(&data) {
             // Les polices dont le nom commence par un point sont réservées au système.
-            if !family.starts_with('.') {
-                families.insert(family);
+            if !d.family.starts_with('.') {
+                families.entry(d.family).or_default().insert(d.face);
             }
         }
     }
-    families.into_iter().collect()
+    families
+        .into_iter()
+        .map(|(family, faces)| FontFamily {
+            family,
+            faces: faces.into_iter().collect(),
+        })
+        .collect()
 }
 
 pub fn fonts_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -130,13 +180,14 @@ pub fn imported(dir: &Path) -> Vec<ImportedFont> {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        for (index, family, weight, italic) in describe(&data) {
+        for d in describe(&data) {
             out.push(ImportedFont {
-                family,
+                family: d.family,
                 file: file.clone(),
-                index,
-                weight,
-                italic,
+                index: d.index,
+                weight: d.face.weight,
+                weight_max: d.face.weight_max,
+                italic: d.face.italic,
             });
         }
     }
@@ -168,7 +219,7 @@ pub fn import(dir: &Path, paths: &[String]) -> Result<Vec<String>, String> {
         }
         let name = path.file_name().unwrap_or_default();
         std::fs::write(dir.join(name), &data).map_err(|e| e.to_string())?;
-        families.extend(described.into_iter().map(|(_, f, _, _)| f));
+        families.extend(described.into_iter().map(|d| d.family));
     }
     if families.is_empty() {
         return Err("Ces fichiers ne sont pas des polices lisibles.".into());

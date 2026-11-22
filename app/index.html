@@ -189,30 +189,85 @@
             <label id="style-name-row">Nom du style
               <input type="text" name="name" autocomplete="off" />
             </label>
-            <label>Police
-              <select name="fontFamily"></select>
-            </label>
-            <div class="row">
-              <label>Taille (pt) <input type="number" name="fontSize" min="6" max="96" step="0.5" /></label>
-              <label>Couleur <input type="color" name="color" /></label>
-            </div>
-            <div class="row">
-              <label class="inline"><input type="checkbox" name="bold" /> Gras</label>
-              <label class="inline"><input type="checkbox" name="italic" /> Italique</label>
-            </div>
-            <div class="row" id="style-spacing">
-              <label>Interligne
-                <select name="lineHeight">
-                  <option value="1">Simple</option>
-                  <option value="1.15">1,15</option>
-                  <option value="1.25">1,25</option>
-                  <option value="1.5">1,5</option>
-                  <option value="2">Double</option>
-                </select>
-              </label>
-              <label>Espace avant (pt) <input type="number" name="spaceBefore" min="0" max="96" step="1" /></label>
-              <label>Espace après (pt) <input type="number" name="spaceAfter" min="0" max="96" step="1" /></label>
-            </div>
+            <fieldset>
+              <legend>Caractères</legend>
+              <div class="row">
+                <div class="field grow">
+                  <span class="field-label">Police</span>
+                  <span class="font-field-row">
+                    <button type="button" id="style-font" class="font-field"><span id="style-font-name"></span><span class="arrow">▾</span></button>
+                    <button type="button" id="style-font-inherit" class="link-button" title="Ne pas choisir de police pour ce style">Aucune</button>
+                  </span>
+                </div>
+                <label>Graisse <select name="fontWeight"></select></label>
+              </div>
+              <div class="row">
+                <label>Taille (pt) <input type="number" name="fontSize" min="6" max="96" step="0.5" /></label>
+                <label>Couleur <input type="color" name="color" /></label>
+                <div class="field">
+                  <span class="field-label">Surlignage</span>
+                  <span class="opt-color">
+                    <input type="checkbox" name="hasHighlight" title="Surligner" />
+                    <input type="color" name="highlight" value="#fff3a3" />
+                  </span>
+                </div>
+              </div>
+              <div class="row checks">
+                <label class="inline"><input type="checkbox" name="italic" /> <i>Italique</i></label>
+                <label class="inline"><input type="checkbox" name="underline" /> <u>Souligné</u></label>
+                <label class="inline"><input type="checkbox" name="strike" /> <s>Barré</s></label>
+                <label class="inline"><input type="checkbox" name="smallCaps" /> <span style="font-variant-caps: small-caps">Petites capitales</span></label>
+              </div>
+              <div class="row">
+                <label>Position
+                  <select name="verticalAlign">
+                    <option value="">Normale</option>
+                    <option value="super">Exposant</option>
+                    <option value="sub">Indice</option>
+                  </select>
+                </label>
+                <label>Casse
+                  <select name="textTransform">
+                    <option value="">Telle que saisie</option>
+                    <option value="uppercase">MAJUSCULES</option>
+                    <option value="lowercase">minuscules</option>
+                    <option value="capitalize">Initiales En Capitales</option>
+                  </select>
+                </label>
+                <label>Espacement des lettres (pt) <input type="number" name="letterSpacing" min="-5" max="20" step="0.1" /></label>
+              </div>
+            </fieldset>
+            <fieldset id="style-paragraph">
+              <legend>Paragraphe</legend>
+              <div class="row">
+                <label>Alignement
+                  <select name="textAlign">
+                    <option value="">À gauche</option>
+                    <option value="center">Centré</option>
+                    <option value="right">À droite</option>
+                    <option value="justify">Justifié</option>
+                  </select>
+                </label>
+                <label>Interligne
+                  <select name="lineHeight">
+                    <option value="1">Simple</option>
+                    <option value="1.15">1,15</option>
+                    <option value="1.25">1,25</option>
+                    <option value="1.5">1,5</option>
+                    <option value="2">Double</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row">
+                <label>Espace avant (pt) <input type="number" name="spaceBefore" min="0" max="96" step="1" /></label>
+                <label>Espace après (pt) <input type="number" name="spaceAfter" min="0" max="96" step="1" /></label>
+              </div>
+              <div class="row">
+                <label>Retrait à gauche (cm) <input type="number" name="indentLeft" min="0" max="15" step="0.25" /></label>
+                <label>Retrait à droite (cm) <input type="number" name="indentRight" min="0" max="15" step="0.25" /></label>
+                <label title="Négatif : retrait suspendu">Première ligne (cm) <input type="number" name="firstLineIndent" min="-10" max="10" step="0.25" /></label>
+              </div>
+            </fieldset>
             <button type="button" id="style-reset" class="link-button">Revenir à la valeur d'origine de ce style</button>
             <button type="button" id="style-delete" class="link-button danger">Supprimer ce style</button>
           </div>

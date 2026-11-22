@@ -277,6 +277,9 @@ pub struct TextStyleAttrs {
     pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_color: Option<String>,
+    /// Graisse CSS, par exemple `"300"` (Light) ou `"600"` (SemiBold).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -567,6 +570,42 @@ pub struct ParagraphStyle {
     pub line_height: f64,
     pub space_before: f64,
     pub space_after: f64,
+    /// Graisse (100 à 900) ; absente : 400, ou 700 si `bold`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<u16>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub underline: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub strike: bool,
+    /// Couleur de surlignage `#rrggbb`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<String>,
+    /// Espacement des lettres, en points (négatif : serré).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub letter_spacing: Option<f64>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub small_caps: bool,
+    /// `super` (exposant) ou `sub` (indice).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_align: Option<String>,
+    /// `uppercase`, `lowercase` ou `capitalize`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_transform: Option<String>,
+    /// `left`, `center`, `right` ou `justify`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_align: Option<String>,
+    /// Retraits à gauche et à droite, en centimètres.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_left: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_right: Option<f64>,
+    /// Retrait de la première ligne, en centimètres (négatif : suspendu).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_line_indent: Option<f64>,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 impl Default for ParagraphStyle {
@@ -580,11 +619,29 @@ impl Default for ParagraphStyle {
             line_height: 1.5,
             space_before: 0.0,
             space_after: 6.0,
+            font_weight: None,
+            underline: false,
+            strike: false,
+            highlight: None,
+            letter_spacing: None,
+            small_caps: false,
+            vertical_align: None,
+            text_transform: None,
+            text_align: None,
+            indent_left: None,
+            indent_right: None,
+            first_line_indent: None,
         }
     }
 }
 
 impl ParagraphStyle {
+    /// Graisse effective (100 à 900).
+    pub fn weight(&self) -> u16 {
+        self.font_weight
+            .unwrap_or(if self.bold { 700 } else { 400 })
+    }
+
     fn heading(font_size: f64, space_before: f64, space_after: f64) -> Self {
         Self {
             font_size,
@@ -598,8 +655,8 @@ impl ParagraphStyle {
 
 /// Un style ajouté par l'utilisateur : de paragraphe (« Citation longue »,
 /// « Dialogue »…) ou de caractère (« Terme étranger »…). Un style de
-/// caractère n'utilise que la police, la taille, le gras, l'italique et la
-/// couleur.
+/// caractère n'utilise que la mise en forme des caractères (police, graisse,
+/// couleurs, effets), pas celle du paragraphe.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomStyle {

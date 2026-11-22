@@ -361,6 +361,81 @@ input {
   background: var(--hover);
 }
 
+.font-more,
+.font-star {
+  margin-right: 4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.font-more {
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 0.15s;
+}
+
+.font-more.open {
+  transform: rotate(90deg);
+}
+
+.font-star {
+  visibility: hidden;
+  margin-right: 8px;
+}
+
+.font-star.on,
+.font-item:hover .font-star {
+  visibility: visible;
+}
+
+.font-star.on {
+  color: #e8a400;
+}
+
+.font-more:hover,
+.font-star:hover {
+  background: var(--hover);
+}
+
+.font-faces {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 6px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.font-face {
+  padding: 4px 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.font-face:hover {
+  background: var(--hover);
+}
+
+.font-face.current {
+  background: var(--active);
+}
+
+.font-show-all {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  padding: 7px 14px;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .font-actions {
   display: flex;
   flex-direction: column;
@@ -967,7 +1042,11 @@ dialog menu button.primary {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-width: 320px;
+  width: 540px;
+}
+
+.styles-dialog {
+  max-height: 92vh;
 }
 
 .style-form .row {
@@ -976,8 +1055,79 @@ dialog menu button.primary {
   gap: 14px;
 }
 
-.style-form .row label {
+.style-form .row label,
+.style-form .field {
   flex: 1;
+}
+
+.style-form .row.checks label {
+  flex: 0 0 auto;
+}
+
+.style-form fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.style-form legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.style-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.style-form .field.grow {
+  flex: 2;
+}
+
+.font-field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.font-field {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #747775;
+  border-radius: 4px;
+  background: white;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.font-field #style-font-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.font-field .arrow {
+  margin-left: 6px;
+  font-family: -apple-system, sans-serif;
+  font-size: 10px;
+}
+
+.opt-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
 }
 
 .style-form input[type="number"] {
