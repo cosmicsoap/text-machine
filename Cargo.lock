@@ -3796,6 +3796,8 @@ dependencies = [
  "tm-io-native",
  "tm-model",
  "ttf-parser",
+ "webview2-com",
+ "windows-core",
 ]
 
 [[package]]

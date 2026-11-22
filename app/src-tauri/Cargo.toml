@@ -34,3 +34,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFData", "CFURL", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGContext", "CGDataProvider", "CGPDFContext", "CGPDFDocument", "CGPDFPage"] }
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "objc2-core-foundation", "block2", "WKWebView", "WKPDFConfiguration"] }
+
+# Export PDF direct sur Windows (mêmes versions que celles de Tauri).
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"

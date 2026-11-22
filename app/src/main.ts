@@ -71,6 +71,16 @@ const SAVE_FILTERS = [
   { name: "Texte brut", extensions: ["txt"] },
 ];
 
+/**
+ * Sous Windows, si l'on retape le nom dans la fenêtre « Enregistrer », le
+ * fichier peut revenir sans extension : Windows ne sait alors plus avec
+ * quoi l'ouvrir. On ajoute l'extension attendue quand elle manque.
+ */
+function withExtension(path: string, ext: string, known: string[] = [ext]): string {
+  const current = path.match(/\.([^.\\/]+)$/)?.[1]?.toLowerCase();
+  return current && known.includes(current) ? path : `${path}.${ext}`;
+}
+
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
 /** Préférences de l'interface (pas du document), gardées par la fenêtre. */
@@ -1216,11 +1226,12 @@ async function saveFile() {
 }
 
 async function saveFileAs() {
-  const path = await save({
+  let path = await save({
     filters: SAVE_FILTERS,
     defaultPath: currentPath?.replace(/\.tmd$/i, ".docx") ?? `${suggestedName()}.docx`,
   });
   if (!path) return;
+  path = withExtension(path, "docx", ["docx", "md", "markdown", "txt", "tmd"]);
   try {
     await writeFile(path);
   } catch (e) {
@@ -1319,8 +1330,9 @@ const EXPORTS: Record<"docx" | "md" | "txt", { name: string; extensions: string[
 /** Word, Markdown et texte : tous les onglets, chacun avec son titre. */
 async function exportAs(kind: keyof typeof EXPORTS) {
   const filter = EXPORTS[kind];
-  const path = await save({ filters: [filter], defaultPath: `${suggestedName()}.${filter.extensions[0]}` });
-  if (!path) return;
+  const chosen = await save({ filters: [filter], defaultPath: `${suggestedName()}.${filter.extensions[0]}` });
+  if (!chosen) return;
+  const path = withExtension(chosen, filter.extensions[0]);
   try {
     await invoke("export_document", { path, file: fileData() });
     setSaveStatus(`Exporté : ${fileName(path)}`);
@@ -1350,11 +1362,12 @@ function printableAllTabs(): JSONContent {
  */
 async function exportPdf(allTabs: boolean) {
   const several = allTabs && tabs.count() > 1;
-  const path = await save({
+  let path = await save({
     filters: [{ name: "PDF", extensions: ["pdf"] }],
     defaultPath: several || tabs.count() === 1 ? `${suggestedName()}.pdf` : `${tabs.active().title}.pdf`,
   });
   if (!path) return;
+  path = withExtension(path, "pdf");
   await flush();
   busy = true;
   // Sans curseur ni sélection dans le PDF : on les remet après.
