@@ -12,7 +12,7 @@ pub use import::{import, open};
 
 use base64::Engine;
 use docx_rs::{
-    AbstractNumbering, AlignmentType, BreakType, Docx, Footer, Hyperlink, HyperlinkType,
+    AbstractNumbering, AlignmentType, ParagraphBorder, ParagraphBorderPosition, ParagraphBorders, BreakType, Docx, Footer, Hyperlink, HyperlinkType,
     IndentLevel, Level, LevelJc, LevelText, LineSpacing, LineSpacingType, NumberFormat, Numbering,
     NumberingId, PageMargin, PageNum, PageOrientationType, Paragraph, Pic, Run, RunFonts, Shading,
     SpecialIndentType, Start, Style, StyleType, Table, TableCell, TableRow, VertAlignType,
@@ -27,6 +27,9 @@ pub enum DocxError {
     Docx(String),
 }
 
+/// Citations : couleur du texte et du trait à gauche.
+const QUOTE_TEXT: &str = "5F6670";
+const QUOTE_BORDER: &str = "D6D9DE";
 /// Police et taille par défaut, les mêmes que dans l'éditeur.
 const DEFAULT_FONT: &str = "Georgia";
 const DEFAULT_SIZE_HALF_POINTS: usize = 24;
@@ -127,7 +130,13 @@ impl Writer {
                 .q_format(true)
                 .size(size)
                 .outline_lvl(outline)
-                .line_spacing(LineSpacing::new().before(240).after(80).line(300));
+                .line_spacing(
+                    LineSpacing::new()
+                        .line_rule(LineSpacingType::Auto)
+                        .before(240)
+                        .after(80)
+                        .line(300),
+                );
             if let Some(c) = color {
                 style = style.color(c);
             }
@@ -328,7 +337,15 @@ impl Writer {
             };
         }
         if ctx.quote_level > 0 {
-            p = p.color("5F6670");
+            // Citation : un trait gris à gauche, comme à l'écran.
+            p.property = p.property.set_borders(
+                ParagraphBorders::with_empty().set(
+                    ParagraphBorder::new(ParagraphBorderPosition::Left)
+                        .size(18)
+                        .space(8)
+                        .color(QUOTE_BORDER),
+                ),
+            );
         }
         p
     }
@@ -347,6 +364,9 @@ impl Writer {
         }
         if ctx.bold {
             run = run.bold();
+        }
+        if ctx.quote_level > 0 {
+            run = run.color(QUOTE_TEXT);
         }
         for mark in marks {
             run = match mark {
@@ -656,6 +676,24 @@ mod import_tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn citation_aller_retour() {
+        let doc = Document::new(vec![
+            Block::paragraph("Avant"),
+            Block::Blockquote {
+                content: vec![Block::paragraph("Cité un"), Block::paragraph("Cité deux")],
+            },
+            Block::paragraph("Après"),
+        ]);
+        let bytes = export(&doc, &PageSetup::default()).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes[..])).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml).unwrap();
+        assert!(xml.contains("<w:pBdr><w:left"), "{xml}");
+        let (back, _) = import(&bytes).unwrap();
+        assert_eq!(back, doc);
     }
 
     #[test]

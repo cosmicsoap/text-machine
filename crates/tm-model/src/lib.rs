@@ -335,6 +335,30 @@ impl Document {
         self.plain_text().split_whitespace().count()
     }
 
+    /// Appelle `f` sur chaque image du document, où qu'elle soit (listes,
+    /// citations, tableaux…).
+    pub fn for_each_image_mut(&mut self, mut f: impl FnMut(&mut ImageAttrs)) {
+        fn walk(blocks: &mut [Block], f: &mut dyn FnMut(&mut ImageAttrs)) {
+            for block in blocks {
+                match block {
+                    Block::Image { attrs } => f(attrs),
+                    Block::Blockquote { content }
+                    | Block::BulletList { content }
+                    | Block::OrderedList { content, .. }
+                    | Block::ListItem { content }
+                    | Block::TaskList { content }
+                    | Block::TaskItem { content, .. }
+                    | Block::Table { content }
+                    | Block::TableRow { content }
+                    | Block::TableCell { content, .. }
+                    | Block::TableHeader { content, .. } => walk(content, f),
+                    _ => {}
+                }
+            }
+        }
+        walk(&mut self.content, &mut f);
+    }
+
     /// Lit un document au format JSON de TipTap / ProseMirror.
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)

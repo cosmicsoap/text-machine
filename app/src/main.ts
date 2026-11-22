@@ -489,15 +489,21 @@ async function exportPdf() {
   const selection = editor.state.selection;
   editor.commands.blur();
   window.getSelection()?.removeAllRanges();
+  // Mode export : seules les feuilles, collées en haut à gauche (styles.css).
+  const desk = document.querySelector<HTMLElement>(".desk")!;
+  const scroll = desk.scrollTop;
+  const pages = Number(paper.style.getPropertyValue("--pages")) || 1;
   document.body.classList.add("exporting");
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   try {
-    await invoke("export_pdf", { path, page: pageSetup });
+    await invoke("export_pdf", { path, page: pageSetup, pages });
     setSaveStatus(`PDF enregistré : ${fileName(path)}`);
   } catch (e) {
     alert(`${e}\nLa fenêtre d'impression va s'ouvrir : choisissez « Enregistrer au format PDF ».`);
     printDocument();
   } finally {
     document.body.classList.remove("exporting");
+    desk.scrollTop = scroll;
     editor.chain().setTextSelection({ from: selection.from, to: selection.to }).focus().run();
   }
 }
