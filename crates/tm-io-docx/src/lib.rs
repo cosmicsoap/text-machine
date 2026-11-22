@@ -114,17 +114,59 @@ fn spacing(style: &ParagraphStyle) -> LineSpacing {
 
 /// Style Word de paragraphe à partir d'un style de la feuille.
 fn word_style(id: &str, name: &str, style: &ParagraphStyle) -> Style {
-    let mut s = Style::new(id, StyleType::Paragraph)
+    let s = Style::new(id, StyleType::Paragraph)
         .name(name)
         .based_on("Normal")
         .next("Normal")
         .q_format(true)
-        .size((style.font_size * 2.0).round() as usize)
         .line_spacing(spacing(style));
-    if let Some(font) = style.font_family.as_deref() {
-        s = s.fonts(fonts(font));
+    paragraph_props(run_props(s, style), style)
+}
+
+/// Style Word de caractère.
+fn word_char_style(id: &str, name: &str, style: &ParagraphStyle) -> Style {
+    let s = Style::new(id, StyleType::Character)
+        .name(name)
+        .q_format(true);
+    run_props(s, style)
+}
+
+/// Nom Word d'une graisse : « Lexend Light », « Lexend SemiBold »… Word
+/// désigne les graisses autres que normal et gras par ce nom de police.
+pub(crate) const WEIGHT_NAMES: [(u16, &str); 7] = [
+    (100, "Thin"),
+    (200, "ExtraLight"),
+    (300, "Light"),
+    (500, "Medium"),
+    (600, "SemiBold"),
+    (800, "ExtraBold"),
+    (900, "Black"),
+];
+
+/// La police Word et le gras d'une famille dans une graisse.
+fn word_font(family: &str, weight: u16) -> (String, bool) {
+    let rounded = ((weight as f64 / 100.0).round() as u16).clamp(1, 9) * 100;
+    match WEIGHT_NAMES.iter().find(|(w, _)| *w == rounded) {
+        Some((_, suffix)) => (format!("{family} {suffix}"), false),
+        None => (family.to_string(), rounded == 700),
     }
-    if style.bold {
+}
+
+/// Mise en forme des caractères d'un style Word.
+fn run_props(mut s: Style, style: &ParagraphStyle) -> Style {
+    s = s.size((style.font_size * 2.0).round() as usize);
+    let weight = style.weight();
+    let (font, bold) = match style.font_family.as_deref() {
+        Some(family) => {
+            let (font, bold) = word_font(family, weight);
+            (Some(font), bold)
+        }
+        None => (None, weight >= 600),
+    };
+    if let Some(font) = font {
+        s = s.fonts(fonts(&font));
+    }
+    if bold {
         s = s.bold();
     }
     if style.italic {
@@ -133,7 +175,58 @@ fn word_style(id: &str, name: &str, style: &ParagraphStyle) -> Style {
     if let Some(c) = hex(style.color.as_deref()) {
         s = s.color(c);
     }
+    if style.underline {
+        s = s.underline("single");
+    }
+    let mut rp = std::mem::take(&mut s.run_property);
+    if style.strike {
+        rp = rp.strike();
+    }
+    if let Some(c) = hex(style.highlight.as_deref()) {
+        rp = rp.shading(Shading::new().fill(c));
+    }
+    if let Some(ls) = style.letter_spacing.filter(|v| *v != 0.0) {
+        rp = rp.character_spacing((ls * 20.0).round() as i32);
+    }
+    if style.text_transform.as_deref() == Some("uppercase") {
+        rp = rp.caps();
+    }
+    match style.vertical_align.as_deref() {
+        Some("super") => rp = rp.vert_align(VertAlignType::SuperScript),
+        Some("sub") => rp = rp.vert_align(VertAlignType::SubScript),
+        _ => {}
+    }
+    s.run_property = rp;
     s
+}
+
+/// Alignement et retraits d'un style de paragraphe Word.
+fn paragraph_props(mut s: Style, style: &ParagraphStyle) -> Style {
+    if let Some(align) = style.text_align.as_deref() {
+        s = s.align(alignment(align));
+    }
+    let tw = |cm: Option<f64>| cm.map(|v| (v * 10.0 * TWIPS_PER_MM).round() as i32);
+    let (left, right) = (tw(style.indent_left), tw(style.indent_right));
+    let special = tw(style.first_line_indent).filter(|v| *v != 0).map(|v| {
+        if v > 0 {
+            SpecialIndentType::FirstLine(v)
+        } else {
+            SpecialIndentType::Hanging(-v)
+        }
+    });
+    if left.is_some() || right.is_some() || special.is_some() {
+        s = s.indent(left, special, right, None);
+    }
+    s
+}
+
+fn alignment(align: &str) -> AlignmentType {
+    match align {
+        "center" => AlignmentType::Center,
+        "right" => AlignmentType::Right,
+        "justify" => AlignmentType::Both,
+        _ => AlignmentType::Left,
+    }
 }
 
 impl Writer {
@@ -157,6 +250,17 @@ impl Writer {
             ))
             .default_size((sheet.normal.font_size * 2.0).round() as usize)
             .default_line_spacing(spacing(&sheet.normal));
+        // Style « Normal » : alignement et retraits du texte normal.
+        let normal = paragraph_props(Style::new("Normal", StyleType::Paragraph), &sheet.normal);
+        match docx
+            .styles
+            .styles
+            .iter_mut()
+            .find(|s| s.style_id == "Normal")
+        {
+            Some(s) => s.paragraph_property = normal.paragraph_property,
+            None => docx = docx.add_style(normal.name("Normal")),
+        }
         if page.landscape {
             docx = docx.page_orient(PageOrientationType::Landscape);
         }
@@ -188,29 +292,11 @@ impl Writer {
                     &custom.name,
                     &custom.style,
                 ),
-                StyleKind::Character => {
-                    let st = &custom.style;
-                    let mut s = Style::new(
-                        format!("{CUSTOM_CHAR_PREFIX}{}", custom.id),
-                        StyleType::Character,
-                    )
-                    .name(&custom.name)
-                    .q_format(true)
-                    .size((st.font_size * 2.0).round() as usize);
-                    if let Some(font) = st.font_family.as_deref() {
-                        s = s.fonts(fonts(font));
-                    }
-                    if st.bold {
-                        s = s.bold();
-                    }
-                    if st.italic {
-                        s = s.italic();
-                    }
-                    if let Some(c) = hex(st.color.as_deref()) {
-                        s = s.color(c);
-                    }
-                    s
-                }
+                StyleKind::Character => word_char_style(
+                    &format!("{CUSTOM_CHAR_PREFIX}{}", custom.id),
+                    &custom.name,
+                    &custom.style,
+                ),
             };
             docx = docx.add_style(style);
         }
@@ -420,12 +506,7 @@ impl Writer {
             }
         }
         if let Some(align) = style.text_align.as_deref() {
-            p = p.align(match align {
-                "center" => AlignmentType::Center,
-                "right" => AlignmentType::Right,
-                "justify" => AlignmentType::Both,
-                _ => AlignmentType::Left,
-            });
+            p = p.align(alignment(align));
         }
         let indent = style.indent.unwrap_or(0) as i32 * INDENT_STEP_TWIPS
             + ctx.quote_level * INDENT_STEP_TWIPS
@@ -542,8 +623,29 @@ impl Writer {
                         .fill(hex(attrs.color.as_deref()).unwrap_or_else(|| "FFF3A3".into())),
                 ),
                 Mark::TextStyle { attrs } => {
-                    if let Some(font) = attrs.font_family.as_deref() {
-                        run = run.fonts(fonts(font.trim_matches(['"', '\''])));
+                    let weight = attrs
+                        .font_weight
+                        .as_deref()
+                        .and_then(|w| w.trim().parse::<u16>().ok());
+                    let family = attrs
+                        .font_family
+                        .as_deref()
+                        .map(|f| f.trim_matches(['"', '\'']).to_string());
+                    match (family, weight) {
+                        (Some(family), None) => run = run.fonts(fonts(&family)),
+                        (family, Some(weight)) => {
+                            // Sans police choisie : celle du style du texte.
+                            let family = family
+                                .or_else(|| self.sheet.font_of(&self.normal).map(str::to_string));
+                            if let Some(family) = family {
+                                let (font, bold) = word_font(&family, weight);
+                                run = run.fonts(fonts(&font));
+                                if bold {
+                                    run = run.bold();
+                                }
+                            }
+                        }
+                        (None, None) => {}
                     }
                     if let Some(size) = attrs.font_size.as_deref().and_then(points) {
                         run = run.size((size * 2.0).round() as usize);
@@ -952,5 +1054,56 @@ mod import_tests {
         let (back, _, back_styles) = import(&bytes).unwrap();
         assert_eq!(back, doc);
         assert_eq!(back_styles.custom, styles.custom);
+    }
+
+    #[test]
+    fn toutes_les_options_de_style_aller_retour() {
+        use tm_model::CustomStyle;
+        let mut styles = StyleSheet::default();
+        styles.normal.text_align = Some("justify".into());
+        styles.normal.first_line_indent = Some(1.0);
+        styles.custom.push(CustomStyle {
+            id: "exergue".into(),
+            name: "Exergue".into(),
+            kind: StyleKind::Paragraph,
+            style: ParagraphStyle {
+                font_family: Some("Lexend".into()),
+                font_weight: Some(300),
+                text_align: Some("right".into()),
+                indent_left: Some(2.0),
+                indent_right: Some(1.5),
+                first_line_indent: Some(-0.5),
+                ..ParagraphStyle::default()
+            },
+        });
+        styles.custom.push(CustomStyle {
+            id: "marque".into(),
+            name: "Marque".into(),
+            kind: StyleKind::Character,
+            style: ParagraphStyle {
+                font_family: Some("Lexend".into()),
+                font_weight: Some(600),
+                underline: true,
+                strike: true,
+                highlight: Some("#fff3a3".into()),
+                letter_spacing: Some(1.5),
+                text_transform: Some("uppercase".into()),
+                vertical_align: Some("super".into()),
+                ..ParagraphStyle::default()
+            },
+        });
+        let doc = Document::new(vec![Block::paragraph("Texte")]);
+        let bytes = export(&doc, &PageSetup::default(), &styles).unwrap();
+        let (_, _, back) = import(&bytes).unwrap();
+        assert_eq!(back.custom, styles.custom);
+        assert_eq!(back.normal.text_align.as_deref(), Some("justify"));
+    }
+
+    #[test]
+    fn graisse_en_nom_de_police_word() {
+        assert_eq!(word_font("Lexend", 300), ("Lexend Light".into(), false));
+        assert_eq!(word_font("Lexend", 700), ("Lexend".into(), true));
+        assert_eq!(word_font("Lexend", 400), ("Lexend".into(), false));
+        assert_eq!(word_font("Inter", 600), ("Inter SemiBold".into(), false));
     }
 }

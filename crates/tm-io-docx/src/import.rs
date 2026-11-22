@@ -83,15 +83,74 @@ fn read_styles(styles: &Value, headings: &HashMap<String, u8>) -> StyleSheet {
     sheet
 }
 
+/// « Lexend Light » → (« Lexend », 300) : Word nomme ainsi les graisses.
+pub(crate) fn split_weight(font: &str) -> (String, Option<u16>) {
+    for (weight, suffix) in crate::WEIGHT_NAMES {
+        if let Some(family) = font.strip_suffix(suffix).and_then(|f| f.strip_suffix(' ')) {
+            if !family.trim().is_empty() {
+                return (family.to_string(), Some(weight));
+            }
+        }
+    }
+    (font.to_string(), None)
+}
+
 fn apply_word_style(style: &mut ParagraphStyle, run: &Value, para: &Value) {
     if let Some(font) = run["fonts"]["ascii"].as_str() {
-        style.font_family = Some(font.to_string());
+        let (family, weight) = split_weight(font);
+        style.font_family = Some(family);
+        if weight.is_some() {
+            style.font_weight = weight;
+        }
     }
     if let Some(sz) = run["sz"].as_u64() {
         style.font_size = sz as f64 / 2.0;
     }
     if let Some(b) = run["bold"].as_bool() {
         style.bold = b;
+    }
+    if run["underline"].as_str().is_some_and(|u| u != "none") {
+        style.underline = true;
+    }
+    if run["strike"].as_bool() == Some(true) {
+        style.strike = true;
+    }
+    if let Some(fill) = run["shading"]["fill"].as_str().and_then(css_color) {
+        style.highlight = Some(fill);
+    }
+    if let Some(cs) = run["characterSpacing"].as_f64().filter(|v| *v != 0.0) {
+        style.letter_spacing = Some((cs / 20.0 * 100.0).round() / 100.0);
+    }
+    if run["caps"].as_bool() == Some(true) {
+        style.text_transform = Some("uppercase".into());
+    }
+    match run["vertAlign"].as_str() {
+        Some("superscript") => style.vertical_align = Some("super".into()),
+        Some("subscript") => style.vertical_align = Some("sub".into()),
+        _ => {}
+    }
+    match para["alignment"].as_str() {
+        Some("center") => style.text_align = Some("center".into()),
+        Some("right" | "end") => style.text_align = Some("right".into()),
+        Some("both" | "distribute") => style.text_align = Some("justify".into()),
+        _ => {}
+    }
+    let cm = |v: &Value| {
+        v.as_f64()
+            .filter(|v| *v != 0.0)
+            .map(|tw| (tw / 567.0 * 100.0).round() / 100.0)
+    };
+    let ind = &para["indent"];
+    if let Some(v) = cm(&ind["start"]) {
+        style.indent_left = Some(v);
+    }
+    if let Some(v) = cm(&ind["end"]) {
+        style.indent_right = Some(v);
+    }
+    match ind["specialIndent"]["type"].as_str() {
+        Some("firstLine") => style.first_line_indent = cm(&ind["specialIndent"]["val"]),
+        Some("hanging") => style.first_line_indent = cm(&ind["specialIndent"]["val"]).map(|v| -v),
+        _ => {}
     }
     if let Some(i) = run["italic"].as_bool() {
         style.italic = i;
@@ -497,7 +556,9 @@ impl Reader {
             .or(rp["fonts"]["hiAnsi"].as_str())
         {
             if Some(font) != self.default_font.as_deref() {
-                style.font_family = Some(font.to_string());
+                let (family, weight) = split_weight(font);
+                style.font_family = Some(family);
+                style.font_weight = weight.map(|w| w.to_string());
             }
         }
         if let Some(sz) = rp["sz"].as_u64() {

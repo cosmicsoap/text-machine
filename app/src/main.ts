@@ -29,8 +29,8 @@ import {
 } from "./extensions/pagination";
 import { Search, getSearchState } from "./extensions/search";
 import { ParagraphFormat } from "./extensions/paragraph-format";
-import { CharStyle, CustomParagraphStyle } from "./extensions/custom-styles";
-import { allFonts, initFonts, onFontsChange, openFontPicker } from "./fonts";
+import { CharStyle, CustomParagraphStyle, FontWeight } from "./extensions/custom-styles";
+import { choiceLabel, facesOf, initFonts, onFontsChange, openFontPicker, type FontChoice } from "./fonts";
 import { MAX_TAB_LEVEL, TabTree, type TabData, type TabNode } from "./tabs";
 import {
   DEFAULT_STYLES,
@@ -47,6 +47,8 @@ import {
   previewCss,
   styleOfLevel,
   stylesToCss,
+  weightOf,
+  WEIGHT_NAMES,
   type CustomStyle,
   type ParagraphStyle,
   type StyleKey,
@@ -123,6 +125,7 @@ const editor = new Editor({
     ParagraphFormat,
     CustomParagraphStyle,
     CharStyle,
+    FontWeight,
     PageBreak,
     Search,
     Pagination.configure({
@@ -414,8 +417,17 @@ function styleFromSelection(base: ParagraphStyle, withBlock: boolean): Paragraph
   if (text.fontSize) style.fontSize = parseFloat(text.fontSize) || style.fontSize;
   if (text.color) style.color = text.color;
   if (editor.isActive("bold")) style.bold = true;
+  if (text.fontWeight) style.fontWeight = Number(text.fontWeight) || null;
+  else if (editor.isActive("bold")) style.fontWeight = 700;
   if (editor.isActive("italic")) style.italic = true;
+  if (editor.isActive("underline")) style.underline = true;
+  if (editor.isActive("strike")) style.strike = true;
+  if (editor.isActive("superscript")) style.verticalAlign = "super";
+  if (editor.isActive("subscript")) style.verticalAlign = "sub";
+  const mark = editor.getAttributes("highlight");
+  if (editor.isActive("highlight")) style.highlight = mark.color || "#fff3a3";
   if (withBlock && block.lineHeight) style.lineHeight = parseFloat(block.lineHeight) || style.lineHeight;
+  if (withBlock && block.textAlign && block.textAlign !== "left") style.textAlign = block.textAlign;
   return style;
 }
 
@@ -434,9 +446,16 @@ function updateStyleFromSelection() {
     .setTextSelection({ from: $from.start(), to: $from.end() })
     .unsetFontFamily()
     .unsetFontSize()
+    .setFontWeight(null)
     .unsetColor()
     .unsetBold()
     .unsetItalic()
+    .unsetUnderline()
+    .unsetStrike()
+    .unsetHighlight()
+    .unsetSuperscript()
+    .unsetSubscript()
+    .unsetTextAlign()
     .setBlockLineHeight(null)
     .setTextSelection({ from, to })
     .run();
@@ -488,13 +507,19 @@ const styleForm = $<HTMLElement>("#style-form");
 let editingStyle: StyleRef = "normal";
 const styleField = (name: string) => styleForm.querySelector<HTMLInputElement & HTMLSelectElement>(`[name="${name}"]`)!;
 
-function fontOptions(select: HTMLSelectElement, current: string, inherit?: string) {
-  const fonts = allFonts();
-  if (current && !fonts.includes(current)) fonts.push(current);
-  select.replaceChildren();
-  if (inherit) select.append(new Option(inherit, ""));
-  for (const f of fonts) select.append(new Option(f, f));
-  select.value = current;
+const styleFont = $<HTMLButtonElement>("#style-font");
+const styleFontName = $<HTMLElement>("#style-font-name");
+const styleFontInherit = $<HTMLButtonElement>("#style-font-inherit");
+
+/** Les graisses proposées pour une police (celles qu'elle possède). */
+function weightOptions(select: HTMLSelectElement, font: string, current: number) {
+  const weights = new Set(facesOf(font).map((f) => f.weight));
+  if (weights.size < 2) [400, 700].forEach((w) => weights.add(w));
+  weights.add(current);
+  select.replaceChildren(
+    ...[...weights].sort((a, b) => a - b).map((w) => new Option(`${WEIGHT_NAMES[w] ?? w} (${w})`, String(w))),
+  );
+  select.value = String(current);
 }
 
 /** Tous les styles, dans l'ordre des listes : intégrés, puis créés. */
@@ -533,22 +558,32 @@ function renderStyleDialog() {
   const s = getStyle(styles, editingStyle);
   $("#style-name-row").hidden = !custom;
   styleField("name").value = custom?.name ?? "";
-  $("#style-spacing").hidden = character;
+  $("#style-paragraph").hidden = character;
   $("#style-delete").hidden = !custom;
   $("#style-reset").hidden = !!custom;
-  fontOptions(
-    styleField("fontFamily"),
-    editingStyle === "normal" ? fontOf(styles, "normal") : (s.fontFamily ?? ""),
-    editingStyle === "normal"
-      ? undefined
-      : character
-        ? "Celle du paragraphe"
-        : `Comme le texte normal (${fontOf(styles, "normal")})`,
-  );
+  // Police : celle du style, ou héritée (texte normal, ou paragraphe).
+  const inherited = character ? "Celle du paragraphe" : `Comme le texte normal (${fontOf(styles, "normal")})`;
+  const font = editingStyle === "normal" ? fontOf(styles, "normal") : s.fontFamily;
+  styleFontName.textContent = font ?? inherited;
+  styleFont.style.fontFamily = font ? `"${font}", Georgia, serif` : "";
+  styleFontInherit.hidden = editingStyle === "normal" || !s.fontFamily;
+  styleFontInherit.textContent = character ? "Garder celle du paragraphe" : "Comme le texte normal";
+  weightOptions(styleField("fontWeight"), font ?? fontOf(styles, "normal"), weightOf(s));
   styleField("fontSize").value = String(s.fontSize);
   styleField("color").value = s.color || "#000000";
-  styleField("bold").checked = s.bold;
+  styleField("hasHighlight").checked = !!s.highlight;
+  styleField("highlight").value = s.highlight || "#fff3a3";
   styleField("italic").checked = s.italic;
+  styleField("underline").checked = !!s.underline;
+  styleField("strike").checked = !!s.strike;
+  styleField("smallCaps").checked = !!s.smallCaps;
+  styleField("verticalAlign").value = s.verticalAlign ?? "";
+  styleField("textTransform").value = s.textTransform ?? "";
+  styleField("letterSpacing").value = s.letterSpacing ? String(s.letterSpacing) : "0";
+  styleField("textAlign").value = s.textAlign && s.textAlign !== "left" ? s.textAlign : "";
+  styleField("indentLeft").value = String(s.indentLeft ?? 0);
+  styleField("indentRight").value = String(s.indentRight ?? 0);
+  styleField("firstLineIndent").value = String(s.firstLineIndent ?? 0);
   const lh = styleField("lineHeight");
   if (![...lh.options].some((o) => Number(o.value) === s.lineHeight)) lh.append(new Option(String(s.lineHeight).replace(".", ","), String(s.lineHeight)));
   lh.value = [...lh.options].find((o) => Number(o.value) === s.lineHeight)!.value;
@@ -563,19 +598,36 @@ function readStyleForm(event: Event) {
   };
   const s = getStyle(styles, editingStyle);
   const color = styleField("color").value;
+  const weight = Number(styleField("fontWeight").value) || weightOf(s);
+  const target = (event.target as HTMLElement).getAttribute("name");
+  // Choisir une couleur de surlignage coche la case.
+  if (target === "highlight") styleField("hasHighlight").checked = true;
+  const opt = (v: number) => (v ? v : null);
   let next = withStyle(styles, editingStyle, {
-    fontFamily: styleField("fontFamily").value || null,
+    ...s,
     fontSize: num("fontSize", s.fontSize, 6, 96),
-    bold: styleField("bold").checked,
+    bold: weight >= 600,
+    fontWeight: weight === 400 || weight === 700 ? null : weight,
     italic: styleField("italic").checked,
     color: color.toLowerCase() === "#000000" ? null : color,
+    highlight: styleField("hasHighlight").checked ? styleField("highlight").value : null,
+    underline: styleField("underline").checked,
+    strike: styleField("strike").checked,
+    smallCaps: styleField("smallCaps").checked,
+    verticalAlign: (styleField("verticalAlign").value || null) as ParagraphStyle["verticalAlign"],
+    textTransform: (styleField("textTransform").value || null) as ParagraphStyle["textTransform"],
+    letterSpacing: opt(num("letterSpacing", 0, -5, 20)),
+    textAlign: (styleField("textAlign").value || null) as ParagraphStyle["textAlign"],
     lineHeight: num("lineHeight", s.lineHeight, 0.8, 3),
     spaceBefore: num("spaceBefore", s.spaceBefore, 0, 96),
     spaceAfter: num("spaceAfter", s.spaceAfter, 0, 96),
+    indentLeft: opt(num("indentLeft", 0, 0, 15)),
+    indentRight: opt(num("indentRight", 0, 0, 15)),
+    firstLineIndent: opt(num("firstLineIndent", 0, -10, 10)),
   });
   const id = customId(editingStyle);
   const name = styleField("name").value.trim();
-  if (id && name && (event.target as HTMLElement).getAttribute("name") === "name") {
+  if (id && name && target === "name") {
     next = { ...next, custom: next.custom.map((c) => (c.id === id ? { ...c, name } : c)) };
   }
   setStyles(next);
@@ -588,6 +640,26 @@ function readStyleForm(event: Event) {
 }
 
 styleForm.addEventListener("input", readStyleForm);
+
+/** Police d'un style, choisie dans le sélecteur (avec sa graisse). */
+function setStyleFont(choice: FontChoice | null) {
+  const s = getStyle(styles, editingStyle);
+  const style: ParagraphStyle = { ...s, fontFamily: choice?.family ?? null };
+  if (choice?.weight) {
+    style.fontWeight = choice.weight === 400 || choice.weight === 700 ? null : choice.weight;
+    style.bold = choice.weight >= 600;
+    style.italic = !!choice.italic;
+  }
+  setStyles(withStyle(styles, editingStyle, style));
+  renderStyleDialog();
+}
+
+styleFont.addEventListener("click", () => {
+  const s = getStyle(styles, editingStyle);
+  const family = editingStyle === "normal" ? fontOf(styles, "normal") : (s.fontFamily ?? "");
+  openFontPicker(styleFont, { family, weight: weightOf(s), italic: s.italic }, setStyleFont);
+});
+styleFontInherit.addEventListener("click", () => setStyleFont(null));
 styleForm.addEventListener("change", readStyleForm);
 $("#style-reset").addEventListener("click", () => {
   const key = editingStyle as StyleKey;
@@ -1548,7 +1620,7 @@ setupMenubar($("#menubar"), [
       { label: "Correcteur orthographique", checked: (editor.view.dom as HTMLElement).spellcheck, action: toggleSpellcheck },
       SEP,
       { label: "Modifier les styles…", action: () => openStylesDialog() },
-      { label: "Polices…", action: () => openFontPicker(fontButton, fontName.textContent ?? "", chooseFont) },
+      { label: "Polices…", action: openToolbarFonts },
     ],
   },
 ]);
@@ -1693,15 +1765,45 @@ blockSelect.addEventListener("change", () => {
   refreshToolbar();
 });
 
-/** Applique une police au texte sélectionné. */
-function chooseFont(font: string) {
-  // La police du style : on retire la police choisie à la main.
-  if (font === fontOf(styles, currentStyleKey())) chain().unsetFontFamily().run();
-  else chain().setFontFamily(font).run();
+/** La police et la graisse que donne le style au texte du curseur. */
+function styleFontAt(): FontChoice {
+  const key = currentStyleKey();
+  const char = currentCharStyle();
+  const charStyle = char ? findCustom(styles, customRef(char))?.style : undefined;
+  const base = getStyle(styles, key);
+  return {
+    family: charStyle?.fontFamily ?? fontOf(styles, key),
+    weight: charStyle ? weightOf(charStyle) : weightOf(base),
+  };
 }
 
+/** La police du texte au curseur, avec sa graisse. */
+function currentFont(): FontChoice {
+  const style = editor.getAttributes("textStyle");
+  const fromStyle = styleFontAt();
+  const family = style.fontFamily ? String(style.fontFamily).replace(/["']/g, "") : fromStyle.family;
+  const weight = style.fontWeight ? Number(style.fontWeight) : editor.isActive("bold") ? 700 : fromStyle.weight;
+  return { family, weight, italic: editor.isActive("italic") };
+}
+
+/** Applique une police (et peut-être une graisse) au texte sélectionné. */
+function chooseFont(choice: FontChoice) {
+  const fromStyle = styleFontAt();
+  let c = chain();
+  // La police du style : on retire la police choisie à la main.
+  c = choice.family === fromStyle.family ? c.unsetFontFamily() : c.setFontFamily(choice.family);
+  if (choice.weight) {
+    c = c.unsetBold().setFontWeight(choice.weight === fromStyle.weight ? null : String(choice.weight));
+    c = choice.italic ? c.setItalic() : c.unsetItalic();
+  } else {
+    c = c.setFontWeight(null);
+  }
+  c.run();
+}
+
+const openToolbarFonts = () => openFontPicker(fontButton, currentFont(), chooseFont);
 fontButton.addEventListener("mousedown", (e) => e.preventDefault());
-fontButton.addEventListener("click", () => openFontPicker(fontButton, fontName.textContent ?? "", chooseFont));
+fontButton.addEventListener("click", openToolbarFonts);
 
 fontSizeInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -1778,11 +1880,9 @@ function refreshToolbar() {
   const shown: StyleRef = char && styles.custom.some((c) => c.id === char) ? customRef(char) : key;
   if (blockSelect.value !== shown) blockSelect.value = shown;
 
-  const style = editor.getAttributes("textStyle");
-  const charFont = char ? findCustom(styles, customRef(char))?.style.fontFamily : null;
-  const font = style.fontFamily ? String(style.fontFamily).replace(/["']/g, "") : (charFont ?? fontOf(styles, key));
-  fontName.textContent = font;
-  fontButton.style.fontFamily = `"${font}", Georgia, serif`;
+  const font = currentFont();
+  fontName.textContent = choiceLabel({ family: font.family, weight: font.weight });
+  fontButton.style.fontFamily = `"${font.family}", Georgia, serif`;
   if (document.activeElement !== fontSizeInput) {
     fontSizeInput.value = String(currentFontSize()).replace(".", ",");
   }
@@ -1864,6 +1964,7 @@ updateCounts();
 restoreSession();
 onFontsChange(() => {
   if (stylesDialog.open) renderStyleDialog();
+  refreshToolbar();
 });
 initFonts();
 

@@ -103,8 +103,8 @@ async fn export_pdf(
 
 /// Familles des polices installées sur l'ordinateur (lues une seule fois).
 #[tauri::command]
-async fn list_system_fonts() -> Vec<String> {
-    static CACHE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+async fn list_system_fonts() -> Vec<fonts::FontFamily> {
+    static CACHE: std::sync::OnceLock<Vec<fonts::FontFamily>> = std::sync::OnceLock::new();
     CACHE.get_or_init(fonts::system_families).clone()
 }
 

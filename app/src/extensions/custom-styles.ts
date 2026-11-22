@@ -12,6 +12,10 @@ declare module "@tiptap/core" {
       setCharStyle: (id: string) => ReturnType;
       unsetCharStyle: () => ReturnType;
     };
+    fontWeight: {
+      /** Graisse du texte (« 300 », « 600 »…) ; null la retire. */
+      setFontWeight: (weight: string | null) => ReturnType;
+    };
   }
 }
 
@@ -72,6 +76,38 @@ export const CharStyle = Mark.create({
         () =>
         ({ commands }) =>
           commands.unsetMark(this.name),
+    };
+  },
+});
+
+/** Graisse du texte (Light, Medium, SemiBold…), portée par `textStyle`. */
+export const FontWeight = Extension.create({
+  name: "fontWeight",
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["textStyle"],
+        attributes: {
+          fontWeight: {
+            default: null,
+            parseHTML: (el) => {
+              const w = el.style.fontWeight;
+              return /^\d+$/.test(w) ? w : null;
+            },
+            renderHTML: (attrs) => (attrs.fontWeight ? { style: `font-weight: ${attrs.fontWeight}` } : {}),
+          },
+        },
+      },
+    ];
+  },
+
+  addCommands() {
+    return {
+      setFontWeight:
+        (weight) =>
+        ({ chain }) =>
+          chain().setMark("textStyle", { fontWeight: weight }).removeEmptyTextStyle().run(),
     };
   },
 });
