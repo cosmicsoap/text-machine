@@ -2419,7 +2419,7 @@ body.focus-mode .sheet {
   box-shadow: none;
 }
 
-body.focus-mode .page-number {
+body.focus-mode :is(.page-number, .margins-layer) {
   display: none;
 }
 
