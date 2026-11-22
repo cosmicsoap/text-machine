@@ -13,9 +13,9 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 > marges, sauts de page, numéros de page). Plan du document,
 > rechercher/remplacer (⌘F) et correcteur orthographique du Mac.
 > Enregistrement automatique, fichiers récents, et l'application rouvre
-> le dernier document au lancement. Export PDF (identique à l'écran,
-> via la fenêtre d'impression du Mac), Word (.docx), Markdown et texte ;
-> import Markdown et texte.
+> le dernier document au lancement. Les documents s'ouvrent et
+> s'enregistrent directement en **Word (.docx)** ou en **Markdown (.md)**.
+> Export PDF direct (identique à l'écran), impression à part.
 
 ## Comment c'est construit
 
@@ -36,9 +36,9 @@ text-machine/
 ├── crates/
 │   ├── tm-model/         Le modèle de document (paragraphes, titres, listes, gras…)
 │   ├── tm-ops/           Les modifications du document et annuler / rétablir
-│   ├── tm-io-native/     Le format de fichier .tmd (provisoire)
+│   ├── tm-io-native/     Format interne .tmd (brouillon, anciens fichiers)
 │   ├── tm-io-markdown/   Import et export Markdown / texte brut
-│   └── tm-io-docx/       Export Word (.docx)
+│   └── tm-io-docx/       Lecture et écriture Word (.docx)
 └── app/
     ├── index.html        La fenêtre : barre d'outils, page, barre d'état
     ├── src/              Le code de l'éditeur web (TypeScript)
@@ -132,8 +132,7 @@ cargo test --workspace
 
 ## Questions encore ouvertes
 
-- Format natif définitif : SQLite ou ZIP + JSON (pour l'instant, un fichier
-  JSON `.tmd` ; seul `tm-io-native` changera).
-- Pagination dès le MVP ou seulement à l'export PDF.
-- Nom définitif et extension de fichier.
+- Les documents sont enregistrés en Word (.docx) ou Markdown ; le format
+  interne `.tmd` ne sert plus qu'au brouillon (et aux anciens fichiers).
+- Nom définitif de l'application.
 - Licence.

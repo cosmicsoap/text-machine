@@ -3779,6 +3779,10 @@ dependencies = [
 name = "text-machine"
 version = "0.1.0"
 dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
  "serde",
  "serde_json",
  "tauri",
@@ -3897,6 +3901,7 @@ dependencies = [
  "base64 0.23.1",
  "docx-rs",
  "image",
+ "serde_json",
  "thiserror 2.0.21",
  "tm-model",
  "zip 2.6.1",

@@ -611,3 +611,10 @@ dialog label.inline {
     overflow: hidden;
   }
 }
+
+.menu hr {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}

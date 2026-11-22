@@ -9,7 +9,7 @@
   <body>
     <header class="toolbar" id="toolbar">
       <button data-action="new" title="Nouveau document (⌘N)">Nouveau</button>
-      <button data-action="open" title="Ouvrir (⌘O)">Ouvrir</button>
+      <button data-action="open" title="Ouvrir un document Word, Markdown ou texte (⌘O)">Ouvrir</button>
       <span class="menu-anchor">
         <button data-action="recent" title="Fichiers récents">Récents ▾</button>
         <div class="menu" id="recent-menu" hidden></div>
@@ -18,13 +18,14 @@
       <span class="menu-anchor">
         <button data-action="export" title="Exporter dans un autre format">Exporter ▾</button>
         <div class="menu" id="export-menu" hidden>
-          <button data-export="print">PDF / Imprimer…</button>
+          <button data-export="pdf">PDF (.pdf)…</button>
           <button data-export="docx">Word (.docx)</button>
           <button data-export="md">Markdown (.md)</button>
           <button data-export="txt">Texte brut (.txt)</button>
+          <hr />
+          <button data-export="print">Imprimer… (⌘P)</button>
         </div>
       </span>
-      <button data-action="import" title="Importer un fichier Markdown ou texte">Importer…</button>
       <span class="sep"></span>
       <button data-action="undo" title="Annuler (⌘Z)">↶</button>
       <button data-action="redo" title="Rétablir (⇧⌘Z)">↷</button>
@@ -114,17 +115,17 @@
     <dialog id="link-dialog">
       <form method="dialog">
         <label>Adresse du lien
-          <input type="url" id="link-url" placeholder="https://exemple.fr" />
+          <input type="text" id="link-url" autocomplete="off" placeholder="https://exemple.fr" />
         </label>
         <menu>
-          <button value="remove" type="submit">Retirer le lien</button>
-          <button value="cancel" type="submit">Annuler</button>
+          <button value="remove" type="submit" formnovalidate>Retirer le lien</button>
+          <button value="cancel" type="submit" formnovalidate>Annuler</button>
           <button value="ok" type="submit" class="primary">Appliquer</button>
         </menu>
       </form>
     </dialog>
     <dialog id="page-dialog">
-      <form method="dialog" class="page-form">
+      <form method="dialog" class="page-form" novalidate>
         <h2>Mise en page</h2>
         <label>Format
           <select name="size">
@@ -139,14 +140,14 @@
         </fieldset>
         <fieldset class="margins">
           <legend>Marges (cm)</legend>
-          <label>Haut <input type="number" name="top" min="0" max="10" step="0.1" /></label>
-          <label>Bas <input type="number" name="bottom" min="0" max="10" step="0.1" /></label>
-          <label>Gauche <input type="number" name="left" min="0" max="10" step="0.1" /></label>
-          <label>Droite <input type="number" name="right" min="0" max="10" step="0.1" /></label>
+          <label>Haut <input type="number" name="top" min="0" max="10" step="any" inputmode="decimal" /></label>
+          <label>Bas <input type="number" name="bottom" min="0" max="10" step="any" inputmode="decimal" /></label>
+          <label>Gauche <input type="number" name="left" min="0" max="10" step="any" inputmode="decimal" /></label>
+          <label>Droite <input type="number" name="right" min="0" max="10" step="any" inputmode="decimal" /></label>
         </fieldset>
         <label class="inline"><input type="checkbox" name="pageNumbers" /> Numéros de page</label>
         <menu>
-          <button value="cancel" type="submit">Annuler</button>
+          <button value="cancel" type="submit" formnovalidate>Annuler</button>
           <button value="ok" type="submit" class="primary">OK</button>
         </menu>
       </form>
