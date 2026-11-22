@@ -7,6 +7,13 @@
 #   tout marche) et rangés dans l'onglet « Actions ».
 # - On peut aussi relancer à la main : onglet Actions > « Applications »
 #   > « Run workflow ».
+#
+# Mise à jour automatique : chaque fabrication reçoit un numéro de version
+# plus grand que la précédente (0.1.<numéro de la fabrication>). Les
+# applications sont signées avec la clé de mise à jour de Text Machine (secret
+# TAURI_SIGNING_PRIVATE_KEY du dépôt), et « latest.json » indique aux
+# applications déjà installées où trouver la nouvelle version. Sans ce secret,
+# tout est fabriqué comme avant, sans fichiers de mise à jour.
 name: Applications
 
 on:
@@ -17,6 +24,11 @@ on:
 
 permissions:
   contents: write
+
+env:
+  VERSION: 0.1.${{ github.run_number }}
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
 concurrency:
   group: applications-${{ github.ref }}
@@ -48,19 +60,33 @@ jobs:
 
       - name: Fabriquer l'application
         working-directory: app
-        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            config='{"version":"'$VERSION'","bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "::warning::Secret TAURI_SIGNING_PRIVATE_KEY absent : pas de fichiers de mise à jour."
+            config='{"version":"'$VERSION'"}'
+          fi
+          npx tauri build --target universal-apple-darwin --bundles app,dmg --config "$config"
 
       - name: Renommer le .dmg
         run: |
           dmg=$(find target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' | head -n 1)
           test -n "$dmg"
           mv "$dmg" Text-Machine-mac.dmg
-          ls -lh Text-Machine-mac.dmg
+          # Pour la mise à jour automatique : l'application compressée et sa
+          # signature (seulement si la clé de signature est disponible).
+          dir=target/universal-apple-darwin/release/bundle/macos
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            mv "$dir"/*.app.tar.gz Text-Machine-mac.app.tar.gz
+            mv "$dir"/*.app.tar.gz.sig Text-Machine-mac.app.tar.gz.sig
+          fi
+          ls -lh Text-Machine-mac.*
 
       - uses: actions/upload-artifact@v4
         with:
           name: Text-Machine-mac
-          path: Text-Machine-mac.dmg
+          path: Text-Machine-mac.*
 
   windows:
     name: Windows (.exe)
@@ -86,7 +112,15 @@ jobs:
       # d'administrateur et ajoute Text Machine au menu Démarrer.
       - name: Fabriquer l'application
         working-directory: app
-        run: npx tauri build --bundles nsis
+        shell: bash
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            config='{"version":"'$VERSION'","bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "::warning::Secret TAURI_SIGNING_PRIVATE_KEY absent : pas de fichiers de mise à jour."
+            config='{"version":"'$VERSION'"}'
+          fi
+          npx tauri build --bundles nsis --config "$config"
 
       - name: Renommer l'installateur
         shell: bash
@@ -94,12 +128,16 @@ jobs:
           exe=$(find target/release/bundle/nsis -name '*.exe' | head -n 1)
           test -n "$exe"
           mv "$exe" Text-Machine-windows.exe
-          ls -lh Text-Machine-windows.exe
+          # La mise à jour réutilise l'installateur ; il suffit de sa signature.
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            mv "$exe.sig" Text-Machine-windows.exe.sig
+          fi
+          ls -lh Text-Machine-windows.*
 
       - uses: actions/upload-artifact@v4
         with:
           name: Text-Machine-windows
-          path: Text-Machine-windows.exe
+          path: Text-Machine-windows.*
 
   publier:
     name: Publier dans « Releases »
@@ -117,10 +155,35 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           ls -lh
+          files="Text-Machine-mac.dmg Text-Machine-windows.exe"
+
+          # « latest.json » : la fiche que lisent les applications installées
+          # pour savoir s'il existe une version plus récente.
+          if [ -f Text-Machine-mac.app.tar.gz.sig ] && [ -f Text-Machine-windows.exe.sig ]; then
+            base="https://github.com/$GH_REPO/releases/download/derniere-version"
+            jq -n \
+              --arg version "$VERSION" \
+              --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --arg mac_sig "$(cat Text-Machine-mac.app.tar.gz.sig)" \
+              --arg win_sig "$(cat Text-Machine-windows.exe.sig)" \
+              --arg mac_url "$base/Text-Machine-mac.app.tar.gz" \
+              --arg win_url "$base/Text-Machine-windows.exe" \
+              '{version: $version, pub_date: $date, notes: "",
+                platforms: {
+                  "darwin-aarch64": {signature: $mac_sig, url: $mac_url},
+                  "darwin-x86_64": {signature: $mac_sig, url: $mac_url},
+                  "windows-x86_64": {signature: $win_sig, url: $win_url}
+                }}' > latest.json
+            cat latest.json
+            files="$files Text-Machine-mac.app.tar.gz latest.json"
+          else
+            echo "::warning::Pas de signatures : pas de mise à jour automatique pour cette version."
+          fi
+
           gh release delete derniere-version --yes --cleanup-tag || true
-          gh release create derniere-version Text-Machine-mac.dmg Text-Machine-windows.exe \
+          gh release create derniere-version $files \
             --target "$GITHUB_SHA" \
-            --title "Dernière version" \
+            --title "Dernière version ($VERSION)" \
             --latest \
             --notes "Applications fabriquées automatiquement à partir du commit ${GITHUB_SHA::7}.
 
@@ -139,3 +202,6 @@ jobs:
           test "$(gh release view derniere-version --json isDraft -q .isDraft)" = "false"
           curl -fsIL -o /dev/null "https://github.com/$GH_REPO/releases/latest/download/Text-Machine-windows.exe"
           curl -fsIL -o /dev/null "https://github.com/$GH_REPO/releases/latest/download/Text-Machine-mac.dmg"
+          if [ -f latest.json ]; then
+            curl -fsIL -o /dev/null "https://github.com/$GH_REPO/releases/latest/download/latest.json"
+          fi

@@ -16,6 +16,9 @@ tauri-build = { version = "2.7", features = [] }
 [dependencies]
 tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.8"
+# Mise à jour automatique depuis la page « Releases » de GitHub.
+tauri-plugin-updater = "2.14"
+tauri-plugin-process = "2.4"
 serde.workspace = true
 serde_json.workspace = true
 tm-model.workspace = true

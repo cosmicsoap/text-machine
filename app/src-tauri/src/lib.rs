@@ -188,6 +188,8 @@ pub fn run() {
     builder
         .manage(OpenedFiles(Mutex::new(at_launch)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             text_stats,
             list_system_fonts,

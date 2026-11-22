@@ -57,6 +57,7 @@ import {
 } from "./stylesheet";
 import { ICONS } from "./icons";
 import { SEP, closeMenus, popup, setupMenubar, type MenuItem } from "./menus";
+import { checkForUpdates } from "./updates";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
@@ -1532,6 +1533,8 @@ setupMenubar($("#menubar"), [
       SEP,
       { label: "Mise en page…", action: openPageDialog },
       { label: "Imprimer…", shortcut: "⌘P", action: printDocument },
+      SEP,
+      { label: "Rechercher des mises à jour…", action: () => updateApp(true) },
     ],
   },
   {
@@ -1975,6 +1978,18 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeMenus();
 });
 
+/** Recherche (et installe) une nouvelle version de l'application. */
+function updateApp(manual: boolean) {
+  return checkForUpdates({
+    manual,
+    save: async () => {
+      window.clearTimeout(autosaveTimer);
+      await autosave();
+    },
+    status: setSaveStatus,
+  });
+}
+
 // --- Démarrage -----------------------------------------------------------------------
 
 tabs.load([{ title: "Onglet 1", document: editor.getJSON() }]);
@@ -1988,6 +2003,8 @@ toolbar.querySelector('[data-action="spellcheck"]')?.classList.add("active");
 updateCounts();
 void listen("open-files", () => openRequestedFiles()).catch(() => {});
 restoreSession().then(openRequestedFiles);
+// Un peu après le lancement, pour ne pas ralentir l'ouverture du document.
+setTimeout(() => updateApp(false), 3000);
 onFontsChange(() => {
   if (stylesDialog.open) renderStyleDialog();
   refreshToolbar();
