@@ -56,6 +56,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { localizeShortcutTitles } from "./platform";
+import { MarginsView } from "./headers";
 
 /** Formats que l'application ouvre et enregistre directement. */
 const OPEN_FILTERS = [
@@ -119,6 +120,7 @@ let authorName = prefs.get("author", "Moi");
 /** Niveau de révision des nouvelles suggestions (couleurs, comme Scrivener). */
 let revisionLevel = Number(prefs.get("revisionLevel", "1")) || 1;
 let notesView: NotesView | null = null;
+let marginsView: MarginsView | null = null;
 let compare: CompareView | null = null;
 
 /** Numéro de page d'une position (tables des matières), null sans pages. */
@@ -945,6 +947,25 @@ let pageCount = 1;
 
 const isPageless = () => pageSetup.pageless && !forcePaged;
 
+// En-têtes et pieds de page, modifiables directement dans les marges.
+marginsView = new MarginsView(paper, {
+  setup: () => pageSetup,
+  isPageless,
+  onInput: (part, text) => {
+    pageSetup = { ...pageSetup, [part]: text };
+    markDirty();
+  },
+  onLeave: () => editor.commands.focus(),
+});
+
+/** Insertion > En-tête / Pied de page. */
+function editMargin(part: "header" | "footer") {
+  if (!isPageless() && marginsView?.focus(part, desk.getBoundingClientRect().top + desk.clientHeight / 2)) return;
+  // Sans pagination (ou sur une page de titre seule) : par la mise en page.
+  openPageDialog();
+  requestAnimationFrame(() => field(part).focus());
+}
+
 /** Applique le format de page : taille de la feuille et marges. */
 function applyPageSetup() {
   const { width, height } = pageSizePx(pageSetup);
@@ -976,15 +997,10 @@ function drawSheets(pages: number) {
       const sheet = document.createElement("div");
       sheet.className = "sheet";
       sheet.style.top = `calc(${i} * (var(--page-h) + var(--page-gap)))`;
-      if (pageSetup.pageNumbers && !isPageless()) {
-        const number = document.createElement("span");
-        number.className = "page-number";
-        number.textContent = String(i + 1);
-        sheet.append(number);
-      }
       return sheet;
     }),
   );
+  marginsView?.render(pages);
   renderWordBox();
 }
 
@@ -1378,6 +1394,9 @@ async function newFile() {
   };
   loadFile(empty, null);
   await invoke("forget_last_file").catch(() => {});
+  // Les versions de l'ancien brouillon ne concernent pas ce nouveau texte.
+  await invoke("clear_versions", { path: null }).catch(() => {});
+  await refreshVersions();
   await invoke("save_draft", { file: fileData() }).catch(() => {});
   editor.commands.focus();
 }
@@ -1664,6 +1683,8 @@ setupMenubar($("#menubar"), [
       SEP,
       { label: "Note de bas de page", shortcut: "⌥⌘F", action: insertFootnote },
       { label: "Table des matières", action: () => chain().insertTableOfContents().run() },
+      { label: "En-tête", action: () => editMargin("header") },
+      { label: "Pied de page", action: () => editMargin("footer") },
       SEP,
       { label: "Onglet", action: () => tabs.add({ afterId: tabs.activeId }) },
       {
@@ -1830,6 +1851,9 @@ function openPageDialog() {
   }
   for (const side of SIDES) field(side).value = String(+(pageSetup.margins[side] / 10).toFixed(2));
   field("pageNumbers").checked = pageSetup.pageNumbers;
+  field("header").value = pageSetup.header ?? "";
+  field("footer").value = pageSetup.footer ?? "";
+  field("differentFirstPage").checked = !!pageSetup.differentFirstPage;
   pageDialog.returnValue = "";
   pageDialog.showModal();
 }
@@ -1848,6 +1872,9 @@ pageDialog.addEventListener("close", () => {
       pageForm.querySelector<HTMLInputElement>('[name="orientation"]:checked')?.value === "landscape",
     margins: { top: cm("top"), bottom: cm("bottom"), left: cm("left"), right: cm("right") },
     pageNumbers: field("pageNumbers").checked,
+    header: field("header").value.replace(/\s+$/, ""),
+    footer: field("footer").value.replace(/\s+$/, ""),
+    differentFirstPage: field("differentFirstPage").checked,
     pageless: pageForm.querySelector<HTMLInputElement>('[name="mode"]:checked')?.value === "pageless",
   });
 });

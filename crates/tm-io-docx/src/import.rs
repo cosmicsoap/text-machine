@@ -739,8 +739,51 @@ impl Reader {
             right: mm(&m["right"]).unwrap_or(default.right),
         };
         page.page_numbers = section["footer"].to_string().contains("PAGE");
+        page.header = header_text(&section["header"]);
+        page.footer = header_text(&section["footer"]);
+        page.different_first_page = section["titlePg"].as_bool().unwrap_or(false);
         page
     }
+}
+
+/// Texte d'un en-tête ou d'un pied de page lu par docx-rs (`[rid, contenu]`),
+/// une ligne par paragraphe, sans le paragraphe du numéro de page.
+fn header_text(part: &Value) -> String {
+    fn texts(v: &Value, out: &mut String) {
+        match v {
+            Value::Object(map) => {
+                if map.get("type").and_then(Value::as_str) == Some("text") {
+                    if let Some(t) = map["data"]["text"].as_str() {
+                        out.push_str(t);
+                    }
+                    return;
+                }
+                for child in map.values() {
+                    texts(child, out);
+                }
+            }
+            Value::Array(list) => list.iter().for_each(|c| texts(c, out)),
+            _ => {}
+        }
+    }
+    let content = part.get(1).unwrap_or(part);
+    let mut lines = Vec::new();
+    for child in content["children"].as_array().into_iter().flatten() {
+        if child["type"] != "paragraph" {
+            continue;
+        }
+        let raw = child.to_string();
+        if raw.contains("PAGE") || raw.contains("pageNum") {
+            continue;
+        }
+        let mut line = String::new();
+        texts(child, &mut line);
+        lines.push(line);
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
 }
 
 enum Piece {

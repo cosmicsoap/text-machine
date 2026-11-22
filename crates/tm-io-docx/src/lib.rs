@@ -13,7 +13,7 @@ pub use import::{import, open, Imported};
 
 use base64::Engine;
 use docx_rs::{
-    AbstractNumbering, AlignmentType, BreakType, Delete, Docx, Footer, Footnote, Hyperlink,
+    AbstractNumbering, AlignmentType, BreakType, Delete, Docx, Footer, Footnote, Header, Hyperlink,
     HyperlinkType, IndentLevel, Insert, Level, LevelJc, LevelText, LineSpacing, LineSpacingType,
     NumberFormat, Numbering, NumberingId, PageMargin, PageNum, PageOrientationType, Paragraph,
     ParagraphBorder, ParagraphBorderPosition, ParagraphBorders, Pic, Run, RunFonts, Shading,
@@ -280,14 +280,45 @@ impl Writer {
         if page.landscape {
             docx = docx.page_orient(PageOrientationType::Landscape);
         }
-        if page.page_numbers {
-            docx = docx.footer(
-                Footer::new().add_paragraph(
+        // En-tête et pied de page : texte centré, une ligne par paragraphe,
+        // le numéro de page en dernier.
+        let lines = |text: &str| -> Vec<Paragraph> {
+            text.lines()
+                .map(|line| {
+                    Paragraph::new()
+                        .align(AlignmentType::Center)
+                        .add_run(Run::new().add_text(line).size(20))
+                })
+                .collect()
+        };
+        if !page.header.trim().is_empty() {
+            let mut header = Header::new();
+            for p in lines(&page.header) {
+                header = header.add_paragraph(p);
+            }
+            docx = docx.header(header);
+        }
+        if page.page_numbers || !page.footer.trim().is_empty() {
+            let mut footer = Footer::new();
+            if !page.footer.trim().is_empty() {
+                for p in lines(&page.footer) {
+                    footer = footer.add_paragraph(p);
+                }
+            }
+            if page.page_numbers {
+                footer = footer.add_paragraph(
                     Paragraph::new()
                         .align(AlignmentType::Center)
                         .add_page_num(PageNum::new()),
-                ),
-            );
+                );
+            }
+            docx = docx.footer(footer);
+        }
+        if page.different_first_page {
+            docx = docx
+                .first_header(Header::new())
+                .first_footer(Footer::new())
+                .title_pg();
         }
         // Styles de titre : ceux de la feuille de styles, avec un niveau de
         // plan pour que Word les montre dans son volet de navigation.
@@ -987,6 +1018,19 @@ mod import_tests {
     }
 
     #[test]
+    fn pied_de_page_et_numero() {
+        let mut page = PageSetup::default();
+        page.footer = "Jean Dupont — Manuscrit".into();
+        let bytes = export(&sample(), &page, &StyleSheet::default()).unwrap();
+        let (_, back, _) = import(&bytes).unwrap();
+        assert!(back.page_numbers);
+        assert_eq!(back.footer, page.footer);
+        assert_eq!(back.header, "");
+        assert!(!back.different_first_page);
+        std::fs::write(std::env::temp_dir().join("tm-pied.docx"), bytes).unwrap();
+    }
+
+    #[test]
     fn aller_retour_word() {
         let doc = sample();
         let mut page = PageSetup::default();
@@ -994,6 +1038,9 @@ mod import_tests {
         page.landscape = true;
         page.margins.left = 30.0;
         page.page_numbers = false;
+        page.header = "Mon roman\nChapitre provisoire".into();
+        page.footer = "Brouillon".into();
+        page.different_first_page = true;
         let bytes = export(&doc, &page, &StyleSheet::default()).unwrap();
         let (back, back_page, _) = import(&bytes).unwrap();
 

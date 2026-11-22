@@ -842,15 +842,87 @@ input {
   min-height: max(calc(100vh - 220px), 400px);
 }
 
-.page-number {
+/* En-têtes et pieds de page : dans les marges, au-dessus du texte. */
+.margins-layer {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--m-bottom) / 2 - 0.5em);
+  inset: 0;
+  pointer-events: none;
+}
+
+.page-header,
+.page-footer {
+  position: absolute;
+  left: var(--m-left);
+  right: var(--m-right);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
   text-align: center;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--tm-font, Georgia, "Times New Roman", serif);
   font-size: 10pt;
+  line-height: 1.3;
   color: var(--muted);
+  pointer-events: auto;
+}
+
+.page-header {
+  margin-top: calc(var(--m-top) / 2);
+  transform: translateY(-50%);
+}
+
+.page-footer {
+  margin-top: calc(var(--m-bottom) / -2);
+  transform: translateY(-50%);
+}
+
+.hf-text {
+  min-height: 1.3em;
+  white-space: pre-wrap;
+  border-radius: 3px;
+  outline: 1px dashed transparent;
+  outline-offset: 3px;
+  cursor: text;
+}
+
+.hf-text:hover,
+.hf-text:focus {
+  outline-color: #c4c7c5;
+}
+
+.hf-text:focus {
+  color: var(--ink);
+}
+
+/* Vide : rien d'affiché, sauf au survol (on peut y écrire). */
+.hf-text.empty:is(:hover, :focus)::before {
+  content: attr(data-placeholder);
+  color: #9aa0a6;
+  font-style: italic;
+}
+
+body.exporting .hf-text,
+body.exporting .hf-text:focus {
+  outline: none;
+  color: var(--muted);
+}
+
+body.exporting .hf-text.empty::before {
+  content: none;
+}
+
+@media print {
+  .hf-text {
+    outline: none !important;
+  }
+
+  .hf-text.empty::before {
+    content: none !important;
+  }
+}
+
+.page-number {
+  text-align: center;
 }
 
 /* Nombre de mots pendant la saisie. */
@@ -964,6 +1036,29 @@ dialog menu button.primary {
 
 .page-form .margins input {
   width: 70px;
+}
+
+.page-form {
+  width: min(480px, 80vw);
+}
+
+.page-form .margins-text {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.page-form .margins-text textarea {
+  padding: 6px 8px;
+  border: 1px solid #747775;
+  border-radius: 4px;
+  background: var(--page);
+  font: inherit;
+  resize: vertical;
+}
+
+.page-form .margins-text .hint {
+  margin: 0;
+  font-size: 12px;
 }
 
 .hint {
@@ -1954,11 +2049,16 @@ body.suggesting[data-revision="5"] .toolbar select.edit-mode {
 /* Mode « corrections sur l'original » : le texte en cours est montré propre
    (sans le texte barré des suggestions ni leurs couleurs) ; toutes les
    corrections sont sur la version d'origine, à gauche. */
-body.clean-current #editor del.suggest-del {
+body.clean-current #editor del.suggest-del,
+#compare-editor del.suggest-del {
   display: none;
 }
 
-body.clean-current #editor ins.suggest-ins {
+/* Les suggestions déjà présentes dans la version d'origine font partie de
+   son texte : elle est montrée comme si elles étaient acceptées, et seules
+   les différences avec le texte en cours sont en couleur. */
+body.clean-current #editor ins.suggest-ins,
+#compare-editor ins.suggest-ins {
   color: inherit;
   text-decoration: none;
   background: none;

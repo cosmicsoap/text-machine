@@ -148,6 +148,12 @@ pub fn remove(dir: &Path, path: Option<&str>, id: &str) -> Result<(), String> {
     save(dir, &k, &store)
 }
 
+/// Nouveau document : les versions du brouillon précédent sont oubliées
+/// (sinon le nouveau texte serait comparé à un tout autre document).
+pub fn clear(dir: &Path, path: Option<&str>) -> Result<(), String> {
+    save(dir, &key(path), &Store::default())
+}
+
 /// « Enregistrer sous » : les versions suivent le document.
 pub fn copy(dir: &Path, from: Option<&str>, to: &str) -> Result<(), String> {
     let (kf, kt) = (key(from), key(Some(to)));
@@ -184,6 +190,11 @@ fn dir(app: &AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn list_versions(app: AppHandle, path: Option<String>) -> Result<Vec<VersionInfo>, String> {
     Ok(list(&dir(&app)?, path.as_deref()))
+}
+
+#[tauri::command]
+pub fn clear_versions(app: AppHandle, path: Option<String>) -> Result<(), String> {
+    clear(&dir(&app)?, path.as_deref())
 }
 
 #[tauri::command]
@@ -248,6 +259,18 @@ mod tests {
         assert_eq!(list(&tmp, Some(&file)).len(), 2);
         remove(&tmp, Some(&file), &v1.id).unwrap();
         assert_eq!(list(&tmp, Some(&file)).len(), 1);
+
+        // Nouveau document : les versions de l'ancien brouillon sont oubliées.
+        add(
+            &tmp,
+            None,
+            "Autre".into(),
+            "2026-11-22T12:00:00Z".into(),
+            tabs,
+        )
+        .unwrap();
+        clear(&tmp, None).unwrap();
+        assert!(list(&tmp, None).is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

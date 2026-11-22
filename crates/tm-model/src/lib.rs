@@ -864,6 +864,14 @@ pub struct PageSetup {
     /// Affichage continu, sans pages (« Sans pagination » de Google Docs).
     /// Les exports PDF et l'impression restent découpés en pages.
     pub pageless: bool,
+    /// En-tête : le même texte en haut de chaque page (une ligne par
+    /// paragraphe, vide s'il n'y en a pas).
+    pub header: String,
+    /// Pied de page : le même texte en bas de chaque page, au-dessus du numéro.
+    pub footer: String,
+    /// Ni en-tête, ni pied de page, ni numéro sur la première page
+    /// (page de titre).
+    pub different_first_page: bool,
 }
 
 impl Default for PageSetup {
@@ -874,6 +882,9 @@ impl Default for PageSetup {
             margins: Margins::default(),
             page_numbers: true,
             pageless: false,
+            header: String::new(),
+            footer: String::new(),
+            different_first_page: false,
         }
     }
 }

@@ -20,6 +20,11 @@ export interface PageSetup {
   pageNumbers: boolean;
   /** Affichage continu, sans pages (l'export PDF garde les pages). */
   pageless: boolean;
+  /** En-tête et pied de page (le même sur chaque page ; vide : aucun). */
+  header: string;
+  footer: string;
+  /** Rien en haut ni en bas de la première page (page de titre). */
+  differentFirstPage: boolean;
 }
 
 export const DEFAULT_PAGE_SETUP: PageSetup = {
@@ -28,6 +33,9 @@ export const DEFAULT_PAGE_SETUP: PageSetup = {
   margins: { top: 25.4, bottom: 25.4, left: 25.4, right: 25.4 },
   pageNumbers: true,
   pageless: false,
+  header: "",
+  footer: "",
+  differentFirstPage: false,
 };
 
 const SIZES_MM = { A4: [210, 297], Letter: [215.9, 279.4] } as const;
