@@ -2396,6 +2396,13 @@ compareSelect.addEventListener("change", () => {
   if (version) compareWithVersion(version);
 });
 $("#compare-close").addEventListener("click", () => compare?.close());
+const compareMode = $<HTMLSelectElement>("#compare-mode");
+compareMode.value = prefs.get("compareMode", "original") === "both" ? "both" : "original";
+compare.mode = compareMode.value as "original" | "both";
+compareMode.addEventListener("change", () => {
+  prefs.set("compareMode", compareMode.value);
+  compare?.setMode(compareMode.value as "original" | "both");
+});
 $("#diff-prev").addEventListener("click", () => compare?.go(-1));
 $("#diff-next").addEventListener("click", () => compare?.go(1));
 $("#compare-restore").addEventListener("click", restoreVersion);

@@ -36,6 +36,12 @@ function cleared(state: EditorState): EditorState {
 
 export class CompareView {
   source: CompareSource | null = null;
+  /**
+   * « original » : texte en cours propre à droite, toutes les corrections
+   * sur l'original à gauche (retraits barrés, ajouts en couleur).
+   * « both » : chaque côté surligne ce qui le concerne.
+   */
+  mode: "original" | "both" = "original";
   private viewer: Editor | null = null;
   private timer: number | undefined;
   private syncing = false;
@@ -93,7 +99,7 @@ export class CompareView {
     if (!this.source) return;
     this.source = null;
     this.deps.pane.hidden = true;
-    document.body.classList.remove("comparing");
+    document.body.classList.remove("comparing", "clean-current");
     window.clearTimeout(this.timer);
     setDiffHighlights(this.deps.editor.view, [], "ins");
     for (const { node } of this.deps.tabs.flat()) {
@@ -141,15 +147,26 @@ export class CompareView {
   refresh() {
     if (!this.source || !this.viewer) return;
     window.clearTimeout(this.timer);
-    const { removed, added, changes, places } = compareDocs(this.viewer.state.doc, this.deps.editor.state.doc);
+    const { removed, added, changes, places, insertions } = compareDocs(this.viewer.state.doc, this.deps.editor.state.doc);
     this.places = places;
-    setDiffHighlights(this.viewer.view, removed, "del");
-    setDiffHighlights(this.deps.editor.view, added, "ins");
+    document.body.classList.toggle("clean-current", this.mode === "original");
+    if (this.mode === "original") {
+      setDiffHighlights(this.viewer.view, removed, "del", insertions);
+      setDiffHighlights(this.deps.editor.view, [], "ins");
+    } else {
+      setDiffHighlights(this.viewer.view, removed, "del");
+      setDiffHighlights(this.deps.editor.view, added, "ins");
+    }
     this.deps.showCount(changes, this.missing, docStats(this.viewer.state.doc), docStats(this.deps.editor.state.doc));
   }
 
   /** Endroits des différences dans le texte en cours. */
   private places: number[] = [];
+
+  setMode(mode: "original" | "both") {
+    this.mode = mode;
+    this.refresh();
+  }
 
   /** Va à la différence suivante (1) ou précédente (-1). */
   go(direction: 1 | -1) {

@@ -71,6 +71,10 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 >   retiré, vert : ajouté). On peut aussi comparer avec un autre fichier, et
 >   restaurer une version. Chaque côté affiche ses mots et signes (avec
 >   l'écart), et ↑ ↓ mènent d'une différence à l'autre.
+>   Deux affichages : « Corrections sur l'original » (par défaut : le texte
+>   en cours reste propre à droite, et toutes les corrections, retraits
+>   barrés et ajouts en couleur, s'affichent sur l'original à gauche) ou
+>   « Surlignage des deux côtés ».
 > - **Niveaux de révision** (Outils > Suggestions, comme Scrivener) : cinq
 >   couleurs, pour distinguer les passes de correction ; on accepte ou
 >   refuse un niveau entier. Dans Word, le niveau est ajouté au nom de
