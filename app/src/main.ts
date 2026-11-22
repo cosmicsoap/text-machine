@@ -560,7 +560,13 @@ document.addEventListener("mousedown", (event) => {
 async function restoreSession() {
   try {
     const session = await invoke<Session>("load_session");
-    if (session.lastFile) return await openPath(session.lastFile);
+    // Pas de question « enregistrer ? » ici : le document d'accueil n'est
+    // pas celui de l'utilisateur.
+    if (session.lastFile) {
+      // Fichier déplacé ou supprimé : on reprend le brouillon.
+      const file = await invoke<NativeFile>("open_document", { path: session.lastFile }).catch(() => null);
+      if (file) return loadFile(file, session.lastFile);
+    }
     const draft = await invoke<NativeFile | null>("load_draft");
     if (draft) loadFile(draft, null);
   } catch {
