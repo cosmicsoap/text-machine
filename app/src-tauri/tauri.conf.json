@@ -47,6 +47,46 @@
         ],
         "displayLanguageSelector": false
       }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "docx"
+        ],
+        "name": "Document Word",
+        "description": "Document Word",
+        "role": "Editor",
+        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "contentTypes": [
+          "org.openxmlformats.wordprocessingml.document"
+        ],
+        "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "md",
+          "markdown"
+        ],
+        "name": "Document Markdown",
+        "description": "Document Markdown",
+        "role": "Editor",
+        "mimeType": "text/markdown",
+        "contentTypes": [
+          "net.daringfireball.markdown"
+        ],
+        "rank": "Default"
+      }
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDODdBRjAyMDcxQTY5RjEKUldUeGFSb0hBcStIN0tPeGVCdUZCUnZJdFY2dXNUWTBYMHJEaGhFY2tMNzNWcFFwNmdPZml5eksK",
+      "endpoints": [
+        "https://github.com/cosmicsoap/text-machine/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }
