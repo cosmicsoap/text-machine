@@ -55,6 +55,11 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 >   numéro dans le texte, la note en bas de sa page, modifiable sur place
 >   (à la fin du document sans pagination). Vraies notes Word ; `[^1]` en
 >   Markdown.
+> - **En-tête et pied de page** (Insertion, ou Fichier > Mise en page) :
+>   le même texte en haut et en bas de chaque page, à écrire directement
+>   dans la marge ; le numéro de page vient sous le pied de page. Option
+>   « Rien sur la première page » pour une page de titre. Vrais en-têtes et
+>   pieds de page dans Word, et dans le PDF.
 > - **Table des matières** (Insertion) : les Titres 1 à 3 de l'onglet,
 >   avec leurs numéros de page, mise à jour toute seule ; un clic y amène.
 >   Dans Word, c'est un vrai sommaire (clic droit > Mettre à jour).
