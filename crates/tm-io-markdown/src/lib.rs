@@ -403,6 +403,9 @@ fn escape_line_start(text: &str) -> String {
 
 /// Lit un texte Markdown.
 pub fn import(markdown: &str) -> Document {
+    // Fins de ligne Windows (\r\n) : ramenées à \n, sinon le premier
+    // marqueur d'onglet n'est pas reconnu (un onglet vide apparaissait).
+    let markdown = &markdown.replace("\r\n", "\n");
     let mut b = Builder::default();
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH

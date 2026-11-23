@@ -1653,7 +1653,11 @@ async function openGuide(news = false) {
   guide = { previousPath: guide ? guide.previousPath : currentPath };
   loadFile(file, null);
   setGuide(guide);
-  const target = news ? tabs.roots.find((t) => t.title === "Nouveautés") : tabs.roots[0];
+  // Le panneau des onglets est montré : le guide se lit par ses onglets.
+  setPanelVisible(true);
+  const target = news
+    ? tabs.roots.find((t) => t.title === "Nouveautés")
+    : (tabs.roots.find((t) => t.title === "Présentation") ?? tabs.roots[0]);
   if (target) tabs.activate(target.id);
   editor.commands.focus("start");
 }
