@@ -5,6 +5,22 @@
 //! "content": [...]}`) : l'éditeur web peut ainsi envoyer son document tel
 //! quel au cœur Rust, et une future vue native pourra réutiliser le même
 //! modèle.
+//!
+//! Comment lire ce fichier : un [`Document`] contient des [`Block`]
+//! (paragraphe, titre, liste, tableau…). Les blocs de texte contiennent des
+//! [`Inline`] (du texte, un retour à la ligne, un appel de note), et le texte
+//! porte des [`Mark`] (gras, italique, lien, couleur…). Viennent ensuite les
+//! onglets ([`Tab`]), la feuille de styles ([`StyleSheet`]) et le format des
+//! pages ([`PageSetup`]).
+//!
+//! Les lignes `#[derive(Serialize, Deserialize)]` et `#[serde(…)]` demandent
+//! à la bibliothèque serde d'écrire toute seule la conversion en JSON. Par
+//! exemple, `#[serde(tag = "type", rename_all = "camelCase")]` sur
+//! [`Block`] fait que `Block::Paragraph { content, .. }` s'écrit
+//! `{"type": "paragraph", "content": [...]}`, exactement comme TipTap.
+//! `#[serde(default)]` : si le champ manque dans le JSON, on prend la
+//! valeur par défaut ; `skip_serializing_if` : on ne l'écrit pas s'il est
+//! vide, pour garder des fichiers courts.
 
 use serde::{Deserialize, Serialize};
 

@@ -1,3 +1,7 @@
+# L'« espace de travail » Rust : la liste des crates (bibliothèques) du
+# projet, compilées ensemble. `cargo test --workspace` lance les tests de
+# toutes. Les versions des bibliothèques partagées sont fixées une seule
+# fois ici, dans [workspace.dependencies].
 [workspace]
 resolver = "2"
 members = ["crates/*", "app/src-tauri"]

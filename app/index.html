@@ -1,4 +1,15 @@
 <!doctype html>
+<!--
+  La fenêtre de Text Machine. Ce fichier décrit ce qu'elle contient : l'en-tête
+  (nom du fichier, menus, barre d'outils), le panneau des onglets à gauche, les
+  pages au centre et, plus bas, les boîtes de dialogue (<dialog>), cachées tant
+  qu'on ne les ouvre pas.
+
+  Rien ne bouge ici tout seul : app/src/main.ts retrouve chaque élément par son
+  id (par exemple id="toolbar") et le fait réagir. Les boutons de la barre
+  d'outils portent un data-action (ce qu'ils font) et un data-icon (leur
+  dessin, voir icons.ts). L'apparence est dans app/src/styles.css.
+-->
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />

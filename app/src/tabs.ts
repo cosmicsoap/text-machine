@@ -131,7 +131,12 @@ export class TabTree {
     return this.find(this.activeId)?.node ?? this.roots[0];
   }
 
-  /** Affiche un onglet dans l'éditeur. */
+  /**
+   * Affiche un onglet dans l'éditeur. L'« état » ProseMirror (document,
+   * curseur, historique annuler / rétablir) de l'onglet qu'on quitte est
+   * rangé dans son `TabNode`, et celui du nouvel onglet est mis à sa place
+   * (créé à partir de son JSON la première fois qu'on l'ouvre).
+   */
   private show(node: TabNode) {
     const current = this.find(this.activeId)?.node;
     if (current && current !== node) current.state = this.editor.state;
