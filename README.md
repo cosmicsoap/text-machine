@@ -74,7 +74,13 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 >   Deux affichages : « Corrections sur l'original » (par défaut : le texte
 >   en cours reste propre à droite, et toutes les corrections, retraits
 >   barrés et ajouts en couleur, s'affichent sur l'original à gauche) ou
->   « Surlignage des deux côtés ».
+>   « Surlignage des deux côtés ». Les suggestions déjà présentes dans
+>   l'original comptent comme acceptées : il s'affiche sans couleur tant
+>   que rien n'a changé. Un nouveau document repart sans versions.
+>   Le bouton « Couleurs… » permet d'afficher les corrections sans couleur
+>   (retraits barrés, ajouts soulignés) ou de choisir leurs couleurs. Un
+>   retour à la ligne ajouté apparaît sur l'original sous la forme ¶, suivi
+>   d'un vrai passage à la ligne.
 > - **Niveaux de révision** (Outils > Suggestions, comme Scrivener) : cinq
 >   couleurs, pour distinguer les passes de correction ; on accepte ou
 >   refuse un niveau entier. Dans Word, le niveau est ajouté au nom de
