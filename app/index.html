@@ -188,6 +188,22 @@
       </form>
     </dialog>
 
+    <dialog id="folder-dialog">
+      <form method="dialog" class="folder-form">
+        <h2>Dossier d'enregistrement</h2>
+        <p class="hint">Les nouveaux documents, les exports et « Ouvrir » partent de ce dossier. Vous pouvez toujours en choisir un autre au moment d'enregistrer.</p>
+        <p id="folder-path" class="folder-path"></p>
+        <div class="folder-row">
+          <button type="button" id="folder-choose">Choisir un dossier…</button>
+          <button type="button" id="folder-reset" class="link-button">Ne plus imposer de dossier</button>
+        </div>
+        <p class="hint">Tant qu'un document n'a pas de nom, Text Machine le garde comme brouillon dans ses propres réglages, pour ne jamais rien perdre.</p>
+        <menu>
+          <button value="ok" type="submit" class="primary">OK</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="text-dialog">
       <form method="dialog">
         <h2 id="text-title"></h2>
