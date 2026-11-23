@@ -141,7 +141,8 @@ function diffIndices(a: string[], b: string[], maxEdits = 1500) {
 /** Réunit les jetons voisins en plages. */
 function ranges(tokens: Token[], indices: number[]): DiffRange[] {
   const out: DiffRange[] = [];
-  for (const i of indices.sort((p, q) => p - q)) {
+  // Copie : `added` doit garder l'ordre de `addedAt`.
+  for (const i of [...indices].sort((p, q) => p - q)) {
     const t = tokens[i];
     if (t.to <= t.from) continue;
     const last = out[out.length - 1];
@@ -202,7 +203,13 @@ function insertionsInBefore(
   for (const [j, at] of pairs) {
     const t = b[j];
     const pos = at < a.length ? a[at].from : end;
-    const text = t.text.startsWith("¶") ? "¶ " : t.text.startsWith("■") ? `[${t.text.slice(1).split(":")[0] === "image" ? "image" : "…"}]` : t.text;
+    // Retour à la ligne ajouté : « \n », montré par un ¶ suivi d'un vrai
+    // passage à la ligne (voir diff-highlight.ts).
+    const text = t.text.startsWith("¶")
+      ? "¶\n"
+      : t.text === "\u2028"
+        ? "↵\n"
+        : t.text.startsWith("■") ? `[${t.text.slice(1).split(":")[0] === "image" ? "image" : "…"}]` : t.text;
     const node = t.to > t.from ? after.nodeAt(t.from) : null;
     const mark = node?.marks.find((m) => m.type.name === "insertion");
     const level = mark ? Number(mark.attrs.level) || 1 : 0;

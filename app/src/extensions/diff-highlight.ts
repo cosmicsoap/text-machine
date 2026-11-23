@@ -54,7 +54,16 @@ export function setDiffHighlights(view: EditorView, ranges: DiffRange[], kind: "
           const span = document.createElement("span");
           span.className = "diff-ins diff-widget";
           if (w.level > 1) span.dataset.level = String(w.level);
-          span.textContent = w.text;
+          // Un retour à la ligne ajouté passe vraiment à la ligne.
+          w.text.split("\n").forEach((part, k) => {
+            if (k > 0) {
+              // Pas de <br> : ProseMirror les traite à part dans le texte.
+              const br = document.createElement("span");
+              br.className = "diff-break";
+              span.append(br);
+            }
+            if (part) span.append(part);
+          });
           return span;
         },
         { side: -1, key: `w${i}-${w.pos}-${w.level}-${w.text}`, marks: [] },

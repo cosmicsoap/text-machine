@@ -55,6 +55,11 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 >   numéro dans le texte, la note en bas de sa page, modifiable sur place
 >   (à la fin du document sans pagination). Vraies notes Word ; `[^1]` en
 >   Markdown.
+> - **En-tête et pied de page** (Insertion, ou Fichier > Mise en page) :
+>   le même texte en haut et en bas de chaque page, à écrire directement
+>   dans la marge ; le numéro de page vient sous le pied de page. Option
+>   « Rien sur la première page » pour une page de titre. Vrais en-têtes et
+>   pieds de page dans Word, et dans le PDF.
 > - **Table des matières** (Insertion) : les Titres 1 à 3 de l'onglet,
 >   avec leurs numéros de page, mise à jour toute seule ; un clic y amène.
 >   Dans Word, c'est un vrai sommaire (clic droit > Mettre à jour).
@@ -74,7 +79,13 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 >   Deux affichages : « Corrections sur l'original » (par défaut : le texte
 >   en cours reste propre à droite, et toutes les corrections, retraits
 >   barrés et ajouts en couleur, s'affichent sur l'original à gauche) ou
->   « Surlignage des deux côtés ».
+>   « Surlignage des deux côtés ». Les suggestions déjà présentes dans
+>   l'original comptent comme acceptées : il s'affiche sans couleur tant
+>   que rien n'a changé. Un nouveau document repart sans versions.
+>   Le bouton « Couleurs… » permet d'afficher les corrections sans couleur
+>   (retraits barrés, ajouts soulignés) ou de choisir leurs couleurs. Un
+>   retour à la ligne ajouté apparaît sur l'original sous la forme ¶, suivi
+>   d'un vrai passage à la ligne.
 > - **Niveaux de révision** (Outils > Suggestions, comme Scrivener) : cinq
 >   couleurs, pour distinguer les passes de correction ; on accepte ou
 >   refuse un niveau entier. Dans Word, le niveau est ajouté au nom de
