@@ -4,6 +4,7 @@ Ce qui a changé dans Text Machine, du plus récent au plus ancien. Cette liste 
 
 ## 23 novembre 2026
 
+- **Guide** : sur Windows, il s'ouvrait sur un onglet vide. Il s'ouvre maintenant directement sur « Présentation », avec le panneau des onglets visible. Les fichiers Markdown venant de Windows s'ouvrent aussi sans onglet vide en trop.
 - **Guide intégré** : menu **Aide > Guide de Text Machine**, avec une présentation de toutes les fonctionnalités et cet onglet « Nouveautés ». Il s'ouvre au premier lancement et après chaque mise à jour, sans toucher à vos documents.
 - **Dossier d'enregistrement** (Fichier > Dossier d'enregistrement…) : le dossier proposé par « Enregistrer sous », les exports et « Ouvrir ».
 - **Fenêtre étroite** comme dans Google Docs : la page et la marge des commentaires gardent leur taille, la barre d'outils reste sur une ligne et range le reste sous « ⋮ », le panneau des onglets se replie tout seul.
