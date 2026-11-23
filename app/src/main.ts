@@ -4,6 +4,36 @@
 //
 // L'interface s'inspire de Google Docs : menus, barre d'outils arrondie,
 // panneau des onglets et du plan à gauche, pages au centre.
+//
+// Ce fichier est le chef d'orchestre : il crée l'éditeur, puis relie chaque
+// bouton, menu et boîte de dialogue de `index.html` aux fonctions qui font
+// le travail (souvent rangées dans d'autres fichiers). Pour s'y retrouver,
+// il est découpé en parties qui commencent par « // --- Titre --- » :
+//
+//   (début)                        réglages, préférences, création de l'éditeur
+//   Onglets                        relie TabTree (tabs.ts) à l'éditeur
+//   Panneau de gauche              liste des onglets et plan du document
+//   Feuille de styles              Texte normal, Titre 1… et styles créés
+//   Majuscules / minuscules        Format > Majuscules, date du jour
+//   Rechercher / remplacer         la barre ⌘F
+//   Pages, …, zoom                 feuilles à l'écran, mode sans pagination
+//   Images                         insérer une image depuis un fichier
+//   Nombre de mots …               compteur (calculé par le cœur Rust)
+//   Fichiers                       ouvrir, enregistrer, brouillon, enregistrement auto
+//   Impression, PDF, export        impression et copies dans d'autres formats
+//   Guide intégré                  Aide > Guide de Text Machine
+//   Barre de menus                 le contenu de chaque menu (Fichier, Édition…)
+//   Correcteur orthographique
+//   Barre d'outils                 boutons, police, taille, couleurs, liens, mise en page
+//   Commentaires …                 commentaires dans la marge, mode sans distraction
+//   Notes de bas de page
+//   Petite fenêtre « nom »         demander un texte (nom de version, auteur)
+//   Mode suggestion                proposer des modifications, accepter / refuser
+//   Versions et comparaison        Fichier > Versions, vue côte à côte
+//   Démarrage                      ce qui se passe à l'ouverture de l'application
+//
+// Le voyage d'une frappe jusqu'au fichier enregistré est raconté dans
+// LIRE-LE-CODE.md, à la racine du projet.
 
 import { Editor, createDocument, type JSONContent } from "@tiptap/core";
 import FileHandler from "@tiptap/extension-file-handler";
@@ -84,6 +114,11 @@ function withExtension(path: string, ext: string, known: string[] = [ext]): stri
   return current && known.includes(current) ? path : `${path}.${ext}`;
 }
 
+/**
+ * Raccourci pour trouver un élément de la page : `$("#toolbar")` renvoie
+ * l'élément de `index.html` qui a `id="toolbar"`. Le `!` final dit à
+ * TypeScript « il existe forcément » (il est écrit dans index.html).
+ */
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
 /** Préférences de l'interface (pas du document), gardées par la fenêtre. */
@@ -157,6 +192,12 @@ function pageOf(ed: Editor, pos: number): number | null {
   return Math.max(1, Math.floor(top / (height + SCREEN_GAP_PX)) + 1);
 }
 
+// L'éditeur TipTap lui-même : la zone où l'on écrit. Il reçoit la liste de
+// ses extensions (ce qu'un document peut contenir, et les comportements en
+// plus), et des fonctions à appeler quand quelque chose change :
+// - onUpdate : le texte a changé → à enregistrer, mots à recompter…
+// - onSelectionUpdate : le curseur a bougé → boutons gras, italique… à jour ;
+// - onTransaction : n'importe quel changement (texte, curseur, réglage).
 const editor = new Editor({
   element: $("#editor"),
   extensions: [
@@ -208,6 +249,10 @@ const editor = new Editor({
   onFocus: () => refreshChangeBubble(),
 });
 
+/**
+ * Point de départ d'une commande TipTap, qui remet d'abord le curseur dans
+ * le texte : `chain().toggleBold().run()` met en gras la sélection.
+ */
 const chain = () => editor.chain().focus();
 
 // --- Onglets -------------------------------------------------------------------
@@ -1230,6 +1275,9 @@ wordBox.addEventListener("click", openCountDialog);
 
 // --- Fichiers ---------------------------------------------------------------
 
+// Ce qui part vers le cœur Rust à l'enregistrement et en revient à
+// l'ouverture. La même forme existe en Rust (`NativeFile` dans
+// crates/tm-io-native) : Tauri passe de l'une à l'autre en JSON.
 interface NativeFile {
   tabs: TabData[];
   page: PageSetup;
@@ -1258,6 +1306,7 @@ const AUTOSAVE_DELAY_MS = 1500;
 const fileName = (path: string) => path.split(/[\\/]/).pop()!;
 let recentFiles: string[] = [];
 
+/** Tout le document (onglets, format de page, styles), prêt à être enregistré. */
 function fileData(): NativeFile {
   return { tabs: tabs.toData(), page: pageSetup, styles };
 }
@@ -1314,6 +1363,11 @@ async function autosave() {
   }
 }
 
+/**
+ * Écrit le document dans `path`. Le vrai travail (Word, Markdown…) est fait
+ * par la commande Rust `save_document` (app/src-tauri/src/lib.rs) : `invoke`
+ * lui envoie le document et attend qu'elle ait fini (`await`).
+ */
 async function writeFile(path: string) {
   setSaveStatus("Enregistrement…");
   await invoke("save_document", { path, file: fileData() });
@@ -1340,6 +1394,10 @@ function savedLabel(path: string) {
   return "Enregistré";
 }
 
+/**
+ * Affiche un document reçu du cœur Rust (fichier ouvert, brouillon, guide) :
+ * ses onglets, ses styles et son format de page remplacent ceux d'avant.
+ */
 function loadFile(file: NativeFile, path: string | null) {
   compare?.close();
   loading = true;
@@ -1389,7 +1447,6 @@ async function saveFileAs() {
   }
 }
 
-/** Nom proposé : le premier titre (ou la première ligne) du premier onglet. */
 /** Le texte d'un onglet (sans mise en forme). */
 function tabText(node: TabNode) {
   try {
@@ -1399,6 +1456,7 @@ function tabText(node: TabNode) {
   }
 }
 
+/** Nom proposé : le premier titre (ou la première ligne) du premier onglet. */
 function suggestedName() {
   let text = "";
   try {
@@ -2780,6 +2838,11 @@ function updateApp(manual: boolean) {
 }
 
 // --- Démarrage -----------------------------------------------------------------------
+//
+// Tout ce qui précède ne fait que préparer des fonctions. Ici, l'application
+// s'allume vraiment : premier onglet, styles, zoom, puis reprise du dernier
+// document (restoreSession), des fichiers ouverts d'un double-clic, et du
+// guide après une mise à jour.
 
 tabs.load([{ title: "Onglet 1", document: editor.getJSON() }]);
 localizeShortcutTitles();

@@ -3,6 +3,21 @@
 //! Les commandes ci-dessous sont appelées depuis `app/src/main.ts` avec
 //! `invoke(...)`. Le document circule au format JSON de TipTap, converti en
 //! `tm_model::Document` à l'entrée.
+//!
+//! Comment lire ce fichier :
+//! - chaque fonction marquée `#[tauri::command]` est une « porte » que
+//!   l'éditeur peut ouvrir : `invoke("save_document", { path, file })` en
+//!   TypeScript appelle `save_document(app, path, file)` ici. Les paramètres
+//!   arrivent en JSON et serde les transforme en valeurs Rust (`String`,
+//!   `NativeFile`…) ; la valeur renvoyée repart en JSON ;
+//! - `Result<T, String>` : soit `Ok(T)` (réussi), soit `Err(message)`, que
+//!   l'éditeur reçoit comme une erreur (affichée à l'écran) ;
+//! - `app: AppHandle` n'est pas envoyé par l'éditeur : Tauri le fournit tout
+//!   seul. Il donne accès à l'application (dossiers de réglages, fenêtre…) ;
+//! - tout en bas, `run()` démarre l'application et donne à Tauri la liste
+//!   des commandes autorisées (`generate_handler!`).
+//!
+//! Les `mod …;` ci-dessous incluent les autres fichiers de ce dossier.
 
 mod fonts;
 mod formats;
@@ -25,6 +40,8 @@ fn text_stats(doc: Document) -> TextStats {
     doc.stats()
 }
 
+/// Ouvre un fichier (Word, Markdown, texte ou .tmd) et le renvoie à
+/// l'éditeur. Le `?` arrête tout et renvoie l'erreur si la lecture échoue.
 #[tauri::command]
 fn open_document(app: AppHandle, path: String) -> Result<NativeFile, String> {
     let file = formats::read(&path)?;
@@ -32,6 +49,8 @@ fn open_document(app: AppHandle, path: String) -> Result<NativeFile, String> {
     Ok(file)
 }
 
+/// Enregistre le document dans `path`, au format donné par l'extension
+/// (voir `formats.rs`), puis le note dans les fichiers récents.
 #[tauri::command]
 fn save_document(app: AppHandle, path: String, file: NativeFile) -> Result<(), String> {
     formats::write(&path, &file)?;
@@ -39,6 +58,7 @@ fn save_document(app: AppHandle, path: String, file: NativeFile) -> Result<(), S
     Ok(())
 }
 
+/// Ajoute `path` en tête des fichiers récents (et comme dernier fichier).
 fn remember(app: &AppHandle, path: &str) {
     let mut s = session::load(app);
     s.remember(path);
@@ -183,10 +203,18 @@ fn take_opened_files(opened: tauri::State<OpenedFiles>) -> Vec<String> {
     std::mem::take(&mut *opened.0.lock().unwrap())
 }
 
+/// Démarre l'application (appelé par `main.rs`). On assemble l'application
+/// pièce par pièce avec un « builder » : chaque `.plugin(…)` ajoute un
+/// module de Tauri (boîtes de dialogue, mises à jour…), `.manage(…)` range
+/// une donnée partagée, `.invoke_handler(…)` liste les commandes, puis
+/// `.build(…)` lit `tauri.conf.json` et `.run(…)` ouvre la fenêtre et
+/// tourne jusqu'à ce qu'on quitte.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let at_launch = openable_files(std::env::args().skip(1));
     let builder = tauri::Builder::default();
+    // Une seule fenêtre Text Machine à la fois : un double-clic sur un
+    // fichier alors que l'app tourne déjà l'envoie à celle qui est ouverte.
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         deliver(app, openable_files(args.into_iter().skip(1)));
@@ -227,6 +255,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("erreur au lancement de Text Machine")
+        // Appelé pour chaque événement de l'application. Sur Mac, ouvrir un
+        // fichier depuis le Finder arrive ici (`RunEvent::Opened`).
         .run(|_app, _event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = _event {

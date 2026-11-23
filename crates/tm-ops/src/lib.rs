@@ -4,6 +4,10 @@
 //! revient à appliquer l'inverse. Pour l'instant les opérations travaillent
 //! au niveau des blocs de premier niveau ; des opérations plus fines
 //! (insertion de texte, mise en forme d'une plage) viendront ensuite.
+//!
+//! Ce crate n'est pas encore utilisé par l'application : dans l'éditeur web,
+//! annuler / rétablir est géré par TipTap. Il servira à une future
+//! interface entièrement en Rust.
 
 use tm_model::{Block, Document};
 

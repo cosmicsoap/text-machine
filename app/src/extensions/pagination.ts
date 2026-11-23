@@ -106,6 +106,13 @@ function blockNotes(node: PMNode, noteHeight: PaginationOptions["noteHeight"], i
   return heights;
 }
 
+/**
+ * Mesure chaque bloc tel qu'il est affiché et décide où commencent les
+ * pages. On parcourt les blocs de haut en bas : dès qu'un bloc (avec les
+ * notes de bas de page qu'il appelle) dépasserait du bas de la page en
+ * cours, il commence une nouvelle page, et on note la hauteur de l'espace à
+ * insérer avant lui pour le pousser en haut de la feuille suivante.
+ */
 function computeLayout(view: EditorView, setup: PageSetup, options: PaginationOptions): Layout {
   const notePages: number[] = [];
   if (setup.pageless) {
@@ -201,6 +208,10 @@ export const Pagination = Extension.create<PaginationOptions>({
     const options = this.options;
     let frame = 0;
 
+    // Recalcul des pages, au plus une fois par image affichée
+    // (requestAnimationFrame) : taper plusieurs lettres très vite ne lance
+    // qu'un calcul. Si les coupures n'ont pas changé (même « signature »),
+    // on ne touche à rien ; sinon on remplace les espaces entre les pages.
     const relayout = (view: EditorView) => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {

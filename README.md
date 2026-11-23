@@ -5,6 +5,10 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 
 ![Aperçu de l'éditeur](docs/apercu.png)
 
+**Envie de lire le code ?** Commencez par [LIRE-LE-CODE.md](LIRE-LE-CODE.md) :
+le plan des dossiers, une visite guidée en 8 étapes, le voyage d'une
+touche jusqu'au fichier enregistré, et un lexique des mots techniques.
+
 **Guide intégré :** le menu **Aide > Guide de Text Machine** ouvre un
 document qui présente toutes les fonctionnalités (un sous-onglet par
 thème), et **Aide > Nouveautés** la liste des changements, version par

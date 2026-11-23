@@ -43,6 +43,9 @@ impl Format {
     }
 }
 
+/// Lit un fichier et le transforme en document Text Machine. Chaque format
+/// a son crate (`tm_io_docx`, `tm_io_markdown`, `tm_io_native`) ; ici, on
+/// ne fait qu'aiguiller. `from_flat` redécoupe le document en onglets.
 pub fn read(path: &str) -> Result<NativeFile, String> {
     match Format::of(path) {
         Format::Docx => {
@@ -69,6 +72,9 @@ pub fn read(path: &str) -> Result<NativeFile, String> {
     }
 }
 
+/// Écrit le document dans `path`, au format donné par son extension.
+/// `flattened()` met tous les onglets à la suite dans un seul document,
+/// pour les formats qui ne connaissent pas les onglets.
 pub fn write(path: &str, file: &NativeFile) -> Result<(), String> {
     let bytes = match Format::of(path) {
         Format::Docx => tm_io_docx::export(&file.flattened(), &file.page, &file.styles)
