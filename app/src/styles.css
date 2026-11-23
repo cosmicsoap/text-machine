@@ -204,7 +204,7 @@ input {
 
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 1px;
   margin-top: 6px;
@@ -264,6 +264,40 @@ input {
 
 .toolbar select.wide {
   width: 122px;
+}
+
+/* Une seule ligne : ce qui ne tient pas passe dans le panneau « ⋮ »
+   (voir toolbar-overflow.ts). */
+.toolbar > *,
+.toolbar-more-panel > * {
+  flex-shrink: 0;
+}
+
+.toolbar button.toolbar-more[hidden],
+.toolbar-more-panel[hidden] {
+  display: none;
+}
+
+.toolbar-more-panel {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px;
+  max-width: min(560px, calc(100vw - 16px));
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--toolbar);
+  box-shadow:
+    0 1px 3px 1px rgb(60 64 67 / 0.15),
+    0 1px 2px rgb(60 64 67 / 0.3);
+}
+
+/* Pas de séparateur en tête du panneau. */
+.toolbar-more-panel > .sep:first-child,
+.toolbar-more-panel > .group:first-child > .sep:first-child {
+  display: none;
 }
 
 .toolbar .sep {

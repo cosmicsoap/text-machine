@@ -342,20 +342,13 @@ export class CommentsView {
   }
 
   /**
-   * Largeur de la marge des commentaires : 280 px si la fenêtre le permet,
-   * sinon plus étroite, puis à cheval sur la marge droite de la page (où il
-   * n'y a pas de texte), pour éviter de faire défiler la page de côté.
+   * Marge des commentaires : toujours 280 px à 20 px de la page, comme dans
+   * Google Docs. Si la fenêtre est trop étroite, le bureau défile de côté
+   * plutôt que de rapetisser la page ou les commentaires.
    */
   private fit(scale: number) {
-    const inner = this.desk.clientWidth - 32;
-    const room = (inner - this.paper.offsetWidth * scale) / scale;
-    const marginRight = parseFloat(getComputedStyle(this.paper).getPropertyValue("--m-right")) || 0;
-    let width = 280;
-    let gap = 20;
-    if (room < width + gap) {
-      width = Math.max(220, room - gap);
-      if (room < width + gap) gap = Math.max(-(marginRight - 12), room - width);
-    }
+    const width = 280;
+    const gap = 20;
     this.rail.style.width = `${width}px`;
     this.rail.style.left = `calc(100% + ${gap}px)`;
     // Le bouton « + » reste dans la marge droite de la page.

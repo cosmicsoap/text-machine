@@ -61,6 +61,7 @@ import { listen } from "@tauri-apps/api/event";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { localizeShortcutTitles } from "./platform";
 import { MarginsView } from "./headers";
+import { setupToolbarOverflow } from "./toolbar-overflow";
 
 /** Formats que l'application ouvre et enregistre directement. */
 const OPEN_FILTERS = [
@@ -225,7 +226,11 @@ function schedulePanel() {
   panelTimer = window.setTimeout(renderPanel, 250);
 }
 
+/** Panneau masqué tout seul parce que la fenêtre est étroite (voir fitPanel). */
+let panelAutoHidden = false;
+
 function setPanelVisible(visible: boolean) {
+  panelAutoHidden = false;
   sidePanel.hidden = !visible;
   panelShow.hidden = visible;
   prefs.set("panel", visible ? "1" : "0");
@@ -1064,14 +1069,8 @@ function shownZoom() {
     const available = (desk.clientWidth - 32) / pageSizePx(pageSetup).width;
     return Math.max(0.3, Math.min(zoom, Math.floor(available * 20) / 20));
   }
-  // Commentaires : la page et la marge des commentaires doivent tenir dans
-  // la fenêtre (les cartes peuvent empiéter sur la marge droite de la page).
-  if (desk.classList.contains("with-comments") && !focusMode?.on) {
-    const overlap = Math.min(80, Math.max(0, mmToPx(pageSetup.margins.right) - 12));
-    const need = pageSizePx(pageSetup).width + 260 - overlap;
-    const available = (desk.clientWidth - 32) / need;
-    return Math.max(0.5, Math.min(zoom, Math.floor(available * 20) / 20));
-  }
+  // Avec des commentaires, la page garde sa taille, comme dans Google Docs :
+  // si la fenêtre est trop étroite, on fait défiler de côté.
   return zoom;
 }
 
@@ -1818,6 +1817,7 @@ const linkDialog = $<HTMLDialogElement>("#link-dialog");
 const linkUrl = $<HTMLInputElement>("#link-url");
 const imageInput = $<HTMLInputElement>("#image-file");
 const tableTools = $<HTMLElement>("#table-tools");
+setupToolbarOverflow(toolbar);
 
 const blockAttrs = () =>
   editor.isActive("heading") ? editor.getAttributes("heading") : editor.getAttributes("paragraph");
@@ -2361,8 +2361,32 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("#change-bubbl
 }
 desk.addEventListener("scroll", () => refreshChangeBubble(), { passive: true });
 window.addEventListener("resize", () => {
-  if (compare?.isOpen || desk.classList.contains("with-comments")) setZoom(zoom);
+  if (compare?.isOpen) setZoom(zoom);
+  fitPanel();
 });
+
+/**
+ * Comme dans Google Docs : quand la fenêtre devient trop étroite pour la page,
+ * le panneau des onglets se replie (sans changer le réglage), puis revient
+ * quand la fenêtre s'élargit.
+ */
+let panelNarrow: boolean | undefined;
+function fitPanel() {
+  const narrow = window.innerWidth < paper.getBoundingClientRect().width + 270 + 64;
+  if (narrow === panelNarrow) return;
+  panelNarrow = narrow;
+  if (narrow && !sidePanel.hidden) {
+    sidePanel.hidden = true;
+    panelShow.hidden = false;
+    panelAutoHidden = true;
+  } else if (!narrow && panelAutoHidden) {
+    panelAutoHidden = false;
+    sidePanel.hidden = false;
+    panelShow.hidden = true;
+    renderPanel();
+  }
+}
+fitPanel();
 
 // --- Versions et comparaison côte à côte --------------------------------------------
 
