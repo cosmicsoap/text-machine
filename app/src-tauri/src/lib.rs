@@ -6,6 +6,7 @@
 
 mod fonts;
 mod formats;
+mod guide;
 mod pdf;
 mod session;
 mod versions;
@@ -63,6 +64,13 @@ fn forget_last_file(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn save_draft(app: AppHandle, file: NativeFile) -> Result<(), String> {
     tm_io_native::save(session::draft_path(&app)?, &file).map_err(|e| e.to_string())
+}
+
+/// Le guide intégré (présentation et nouveautés). Il n'a pas de chemin :
+/// l'interface ne l'enregistre jamais.
+#[tauri::command]
+fn open_guide(app: AppHandle) -> NativeFile {
+    guide::document(&app.package_info().version.to_string())
 }
 
 #[tauri::command]
@@ -205,6 +213,7 @@ pub fn run() {
             forget_last_file,
             save_draft,
             load_draft,
+            open_guide,
             print_document,
             export_document,
             export_pdf,

@@ -5,6 +5,13 @@ entièrement hors ligne. Vos documents restent sur votre ordinateur.
 
 ![Aperçu de l'éditeur](docs/apercu.png)
 
+**Guide intégré :** le menu **Aide > Guide de Text Machine** ouvre un
+document qui présente toutes les fonctionnalités (un sous-onglet par
+thème), et **Aide > Nouveautés** la liste des changements, version par
+version (tirée de [CHANGELOG.md](CHANGELOG.md)). Le guide s'ouvre tout seul
+au premier lancement et après chaque mise à jour. Rien n'y est enregistré :
+« Fermer le guide » ramène au document en cours.
+
 > **État :** MVP en construction. On peut écrire, mettre en forme
 > (police, taille, couleurs, surlignage, liens, alignement, interligne,
 > retraits, titres, listes et cases à cocher), insérer des tableaux et des

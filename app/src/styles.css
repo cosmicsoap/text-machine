@@ -2608,3 +2608,36 @@ body.focus-mode #editor .tiptap :is(.comment-mark, .comment-active) {
   background: none !important;
   border: 0 !important;
 }
+
+/* --- Guide intégré ------------------------------------------------------ */
+
+.guide-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 12px 6px;
+  padding: 6px 8px 6px 14px;
+  border-radius: 8px;
+  background: var(--active);
+  color: var(--active-ink);
+}
+
+.guide-bar[hidden] {
+  display: none;
+}
+
+.guide-bar .guide-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.guide-bar button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+body.focus-mode .guide-bar,
+body.exporting .guide-bar {
+  display: none;
+}
