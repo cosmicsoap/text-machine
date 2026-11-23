@@ -131,6 +131,7 @@
             <option value="original">Corrections sur l'original</option>
             <option value="both">Surlignage des deux côtés</option>
           </select>
+          <button type="button" id="compare-colors" class="text" title="Couleurs des corrections">Couleurs…</button>
           <span class="spacer"></span>
           <button type="button" id="compare-restore" class="text" title="Remplacer le texte en cours par cette version">Restaurer</button>
           <button type="button" id="compare-close" data-icon="close" title="Fermer la comparaison"></button>
@@ -169,6 +170,23 @@
       <button type="button" data-change="accept" title="Accepter la suggestion">✓</button>
       <button type="button" data-change="reject" title="Refuser la suggestion">✕</button>
     </div>
+
+    <dialog id="diff-colors-dialog">
+      <form method="dialog" class="diff-colors-form">
+        <h2>Couleurs des corrections</h2>
+        <label class="inline"><input type="checkbox" id="diff-colored" /> Corrections en couleur</label>
+        <p class="hint">Sans couleur : le texte retiré reste barré, le texte ajouté est souligné.</p>
+        <div class="diff-color-row">
+          <label class="inline"><input type="color" id="diff-del-color" /> Retiré</label>
+          <label class="inline"><input type="color" id="diff-ins-color" /> Ajouté</label>
+          <button type="button" id="diff-colors-reset" class="link-button">Couleurs d'origine</button>
+        </div>
+        <p class="diff-preview"><span class="diff-del">texte retiré</span> <span class="diff-ins diff-widget">texte ajouté</span></p>
+        <menu>
+          <button value="ok" type="submit" class="primary">OK</button>
+        </menu>
+      </form>
+    </dialog>
 
     <dialog id="text-dialog">
       <form method="dialog">

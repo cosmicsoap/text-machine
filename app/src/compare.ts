@@ -88,6 +88,7 @@ export class CompareView {
         content: EMPTY,
         editorProps: { attributes: { spellcheck: "false", lang: "fr" } },
       });
+      if (import.meta.env.DEV) (window as unknown as { __viewer: Editor }).__viewer = this.viewer;
     }
     this.deps.pane.hidden = false;
     document.body.classList.add("comparing");

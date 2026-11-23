@@ -2531,6 +2531,37 @@ compareMode.addEventListener("change", () => {
   prefs.set("compareMode", compareMode.value);
   compare?.setMode(compareMode.value as "original" | "both");
 });
+// Couleurs des corrections : en couleur ou non, et lesquelles.
+const DIFF_COLORS = { del: "#a50e0e", ins: "#0d652d" };
+const diffColorsDialog = $<HTMLDialogElement>("#diff-colors-dialog");
+const diffColored = $<HTMLInputElement>("#diff-colored");
+const diffDel = $<HTMLInputElement>("#diff-del-color");
+const diffIns = $<HTMLInputElement>("#diff-ins-color");
+function applyDiffColors() {
+  const colored = prefs.get("diffColored", "1") !== "0";
+  const del = prefs.get("diffDel", DIFF_COLORS.del);
+  const ins = prefs.get("diffIns", DIFF_COLORS.ins);
+  document.body.classList.toggle("diff-plain", !colored);
+  document.documentElement.style.setProperty("--diff-del", del);
+  document.documentElement.style.setProperty("--diff-ins", ins);
+  diffColored.checked = colored;
+  diffDel.value = del;
+  diffIns.value = ins;
+  diffDel.disabled = diffIns.disabled = !colored;
+}
+applyDiffColors();
+$("#compare-colors").addEventListener("click", () => diffColorsDialog.showModal());
+diffColored.addEventListener("change", () => {
+  prefs.set("diffColored", diffColored.checked ? "1" : "0");
+  applyDiffColors();
+});
+diffDel.addEventListener("input", () => (prefs.set("diffDel", diffDel.value), applyDiffColors()));
+diffIns.addEventListener("input", () => (prefs.set("diffIns", diffIns.value), applyDiffColors()));
+$("#diff-colors-reset").addEventListener("click", () => {
+  prefs.set("diffDel", DIFF_COLORS.del);
+  prefs.set("diffIns", DIFF_COLORS.ins);
+  applyDiffColors();
+});
 $("#diff-prev").addEventListener("click", () => compare?.go(-1));
 $("#diff-next").addEventListener("click", () => compare?.go(1));
 $("#compare-restore").addEventListener("click", restoreVersion);
