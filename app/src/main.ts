@@ -57,6 +57,7 @@ import { ICONS } from "./icons";
 import { SEP, closeMenus, popup, setupMenubar, type MenuItem } from "./menus";
 import { checkForUpdates } from "./updates";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { localizeShortcutTitles } from "./platform";
@@ -1243,6 +1244,13 @@ interface Session {
 
 /** Modifications pas encore écrites sur le disque. */
 let dirty = false;
+/**
+ * Guide intégré ouvert (Aide > Guide de Text Machine) : rien n'est
+ * enregistré tant qu'il est affiché, et « Fermer le guide » rouvre le
+ * document d'avant (`previousPath`, ou le brouillon s'il n'avait pas de nom).
+ */
+let guide: { previousPath: string | null } | null = null;
+const GUIDE_STATUS = "Guide : les modifications ne sont pas enregistrées";
 /** Vrai pendant le chargement d'un document (ce n'est pas une modification). */
 let loading = false;
 let autosaveTimer: number | undefined;
@@ -1270,7 +1278,7 @@ function setSaveStatus(text: string) {
 function markDirty() {
   if (loading) return;
   dirty = true;
-  setSaveStatus("Modifications non enregistrées");
+  setSaveStatus(guide ? GUIDE_STATUS : "Modifications non enregistrées");
   window.clearTimeout(autosaveTimer);
   autosaveTimer = window.setTimeout(autosave, AUTOSAVE_DELAY_MS);
 }
@@ -1281,6 +1289,12 @@ function markDirty() {
  */
 async function autosave() {
   if (!dirty) return;
+  if (guide) {
+    // Le guide n'est jamais enregistré (ni dans un fichier, ni dans le brouillon).
+    dirty = false;
+    setSaveStatus(GUIDE_STATUS);
+    return;
+  }
   if (busy) {
     // Un export est en cours : l'éditeur montre un document temporaire.
     window.clearTimeout(autosaveTimer);
@@ -1303,9 +1317,13 @@ async function autosave() {
 async function writeFile(path: string) {
   setSaveStatus("Enregistrement…");
   await invoke("save_document", { path, file: fileData() });
-  // Nouveau nom (premier enregistrement, « Enregistrer sous ») : les
-  // versions suivent le document.
-  if (path !== currentPath) {
+  if (guide) {
+    // « Enregistrer sous » depuis le guide : c'en est une copie, qui devient
+    // un document comme un autre (sans les versions du brouillon).
+    setGuide(null);
+  } else if (path !== currentPath) {
+    // Nouveau nom (premier enregistrement, « Enregistrer sous ») : les
+    // versions suivent le document.
     await invoke("copy_versions", { from: currentPath, to: path }).catch(() => {});
     window.setTimeout(refreshVersions, 0);
   }
@@ -1408,6 +1426,9 @@ function hasText() {
  * Renvoie `false` si l'utilisateur annule.
  */
 async function leaveUntitled(): Promise<boolean> {
+  // Depuis le guide : on revient d'abord au document d'avant, qui suit
+  // ensuite le chemin habituel.
+  if (guide) await closeGuide();
   await flush();
   if (currentPath || !hasText()) return true;
   const keep = await ask("Ce document n'a pas encore de nom. Voulez-vous l'enregistrer ?", {
@@ -1597,11 +1618,81 @@ async function restoreSession() {
  * lancement, ou pendant que l'app tourne. Une seule fenêtre : on ouvre le
  * dernier reçu.
  */
-async function openRequestedFiles(): Promise<void> {
+async function openRequestedFiles(): Promise<boolean> {
   const paths = await invoke<string[]>("take_opened_files").catch(() => [] as string[]);
   const last = paths.at(-1);
   if (last) await openPath(last);
+  return !!last;
 }
+
+// --- Guide intégré -------------------------------------------------------------
+
+function setGuide(state: typeof guide) {
+  guide = state;
+  $("#guide-bar").hidden = !state;
+  document.body.classList.toggle("guide", !!state);
+  if (state) {
+    $("#file-name").textContent = "Guide de Text Machine";
+    $("#file-name").title = "Guide intégré : rien n'y est enregistré";
+    document.title = "Guide — Text Machine";
+    setSaveStatus(GUIDE_STATUS);
+  }
+}
+
+/** Ouvre le guide, sur sa présentation ou sur ses nouveautés. */
+async function openGuide(news = false) {
+  let file: NativeFile;
+  try {
+    file = await invoke<NativeFile>("open_guide");
+  } catch (e) {
+    alert(String(e));
+    return;
+  }
+  // Le document en cours est enregistré avant d'être remplacé à l'écran.
+  if (!guide) await flush();
+  guide = { previousPath: guide ? guide.previousPath : currentPath };
+  loadFile(file, null);
+  setGuide(guide);
+  const target = news ? tabs.roots.find((t) => t.title === "Nouveautés") : tabs.roots[0];
+  if (target) tabs.activate(target.id);
+  editor.commands.focus("start");
+}
+
+/** Ferme le guide et rouvre le document d'avant. */
+async function closeGuide() {
+  if (!guide) return;
+  const { previousPath } = guide;
+  setGuide(null);
+  if (previousPath) {
+    const file = await invoke<NativeFile>("open_document", { path: previousPath }).catch(() => null);
+    if (file) return loadFile(file, previousPath);
+  }
+  const draft = await invoke<NativeFile | null>("load_draft").catch(() => null);
+  loadFile(
+    draft ?? {
+      tabs: [{ title: "Onglet 1", document: { type: "doc", content: [{ type: "paragraph" }] } }],
+      page: structuredClone(DEFAULT_PAGE_SETUP),
+      styles: structuredClone(defaultStyles ?? DEFAULT_STYLES),
+    },
+    null,
+  );
+}
+
+/**
+ * Au premier lancement, le guide s'ouvre sur sa présentation ; après une
+ * mise à jour, sur ses nouveautés. Pas si l'app a été ouverte pour un fichier.
+ */
+async function showGuideIfNew(openedFile: boolean) {
+  if (!("__TAURI_INTERNALS__" in window)) return;
+  const version = await getVersion().catch(() => null);
+  if (!version) return;
+  const seen = prefs.get("guideVersion", "");
+  prefs.set("guideVersion", version);
+  if (seen === version || openedFile) return;
+  await openGuide(seen !== "");
+}
+
+$("#guide-close").addEventListener("click", () => void closeGuide());
 
 // Fermeture de la fenêtre : on enregistre ce qui ne l'est pas encore.
 window.addEventListener("beforeunload", () => {
@@ -1803,6 +1894,16 @@ setupMenubar($("#menubar"), [
       SEP,
       { label: "Modifier les styles…", action: () => openStylesDialog() },
       { label: "Polices…", action: openToolbarFonts },
+    ],
+  },
+  {
+    label: "Aide",
+    items: () => [
+      { label: "Guide de Text Machine", action: () => openGuide(false) },
+      { label: "Nouveautés", action: () => openGuide(true) },
+      ...(guide ? [{ label: "Fermer le guide", action: closeGuide }] : []),
+      SEP,
+      { label: "Rechercher des mises à jour…", action: () => updateApp(true) },
     ],
   },
 ]);
@@ -2452,11 +2553,17 @@ const versionDate = (iso: string) =>
   new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
 
 async function refreshVersions() {
+  // Le guide n'a pas de versions (celles du brouillon ne le concernent pas).
+  if (guide) return (versionList = []);
   versionList = await invoke<VersionInfo[]>("list_versions", { path: currentPath }).catch(() => []);
   return versionList;
 }
 
 async function saveVersion(name?: string) {
+  if (guide) {
+    alert("Le guide n'a pas de versions. Enregistrez-en une copie (Fichier > Enregistrer sous…) pour essayer.");
+    return null;
+  }
   const now = new Date();
   const label =
     name ?? (await askText("Enregistrer une version", "Nom de la version", `Version du ${versionDate(now.toISOString())}`, "Enregistrer"));
@@ -2499,6 +2606,7 @@ async function compareWithFile() {
 
 /** « Original » : la première version, ou une nouvelle si aucune n'existe. */
 async function compareWithOriginal() {
+  if (guide) return void (await saveVersion());
   const list = await refreshVersions();
   const original = list[list.length - 1];
   if (original) return compareWithVersion(original);
@@ -2679,7 +2787,7 @@ refreshToolbar();
 toolbar.querySelector('[data-action="spellcheck"]')?.classList.add("active");
 updateCounts();
 void listen("open-files", () => openRequestedFiles()).catch(() => {});
-restoreSession().then(openRequestedFiles);
+restoreSession().then(openRequestedFiles).then(showGuideIfNew);
 // Un peu après le lancement, pour ne pas ralentir l'ouverture du document.
 setTimeout(() => updateApp(false), 3000);
 onFontsChange(() => {
