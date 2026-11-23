@@ -59,4 +59,18 @@ mod tests {
         assert!(news.contains("1.2.3"), "{news}");
         assert!(news.contains("novembre 2026"), "{news}");
     }
+
+    /// Sur Windows, git peut extraire les fichiers avec des fins de ligne
+    /// \r\n : le guide doit être découpé de la même façon.
+    #[test]
+    fn fins_de_ligne_windows() {
+        let md = markdown("1").replace('\n', "\r\n");
+        let file = NativeFile::from_flat(
+            tm_io_markdown::import(&md),
+            PageSetup::default(),
+            StyleSheet::default(),
+        );
+        let titles: Vec<&str> = file.tabs.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, ["Présentation", NEWS_TAB]);
+    }
 }
