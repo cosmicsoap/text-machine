@@ -105,6 +105,20 @@ const prefs = {
 };
 
 let currentPath: string | null = null;
+
+/**
+ * Dossier où s'ouvrent « Enregistrer sous », les exports et « Ouvrir »
+ * (vide : celui que propose le système, souvent le dernier utilisé).
+ */
+const saveFolder = () => prefs.get("saveFolder", "");
+
+/** Chemin proposé pour un nouveau fichier : dans le dossier choisi, s'il y en a un. */
+function inSaveFolder(name: string) {
+  const dir = saveFolder();
+  if (!dir) return name;
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  return `${dir.replace(/[\\/]+$/, "")}${sep}${name}`;
+}
 let pageSetup: PageSetup = structuredClone(DEFAULT_PAGE_SETUP);
 let styles: StyleSheet = structuredClone(DEFAULT_STYLES);
 /** Styles des nouveaux documents (« Enregistrer comme styles par défaut »). */
@@ -1352,7 +1366,7 @@ async function openPath(path: string) {
 }
 
 async function openFile() {
-  const path = await open({ multiple: false, filters: OPEN_FILTERS });
+  const path = await open({ multiple: false, filters: OPEN_FILTERS, defaultPath: saveFolder() || undefined });
   if (typeof path === "string") await openPath(path);
 }
 
@@ -1364,7 +1378,7 @@ async function saveFile() {
 async function saveFileAs() {
   let path = await save({
     filters: SAVE_FILTERS,
-    defaultPath: currentPath?.replace(/\.tmd$/i, ".docx") ?? `${suggestedName()}.docx`,
+    defaultPath: currentPath?.replace(/\.tmd$/i, ".docx") ?? inSaveFolder(`${suggestedName()}.docx`),
   });
   if (!path) return;
   path = withExtension(path, "docx", ["docx", "md", "markdown", "txt", "tmd"]);
@@ -1472,7 +1486,7 @@ const EXPORTS: Record<"docx" | "md" | "txt", { name: string; extensions: string[
 /** Word, Markdown et texte : tous les onglets, chacun avec son titre. */
 async function exportAs(kind: keyof typeof EXPORTS) {
   const filter = EXPORTS[kind];
-  const chosen = await save({ filters: [filter], defaultPath: `${suggestedName()}.${filter.extensions[0]}` });
+  const chosen = await save({ filters: [filter], defaultPath: inSaveFolder(`${suggestedName()}.${filter.extensions[0]}`) });
   if (!chosen) return;
   const path = withExtension(chosen, filter.extensions[0]);
   try {
@@ -1506,7 +1520,7 @@ async function exportPdf(allTabs: boolean) {
   const several = allTabs && tabs.count() > 1;
   let path = await save({
     filters: [{ name: "PDF", extensions: ["pdf"] }],
-    defaultPath: several || tabs.count() === 1 ? `${suggestedName()}.pdf` : `${tabs.active().title}.pdf`,
+    defaultPath: inSaveFolder(several || tabs.count() === 1 ? `${suggestedName()}.pdf` : `${tabs.active().title}.pdf`),
   });
   if (!path) return;
   path = withExtension(path, "pdf");
@@ -1743,6 +1757,7 @@ setupMenubar($("#menubar"), [
       SEP,
       { label: "Versions", submenu: versionsMenu() },
       SEP,
+      { label: "Dossier d'enregistrement…", action: openFolderDialog },
       { label: "Mise en page…", action: openPageDialog },
       { label: "Imprimer…", shortcut: "⌘P", action: printDocument },
       SEP,
@@ -2693,6 +2708,28 @@ $("#diff-colors-reset").addEventListener("click", () => {
   prefs.set("diffDel", DIFF_COLORS.del);
   prefs.set("diffIns", DIFF_COLORS.ins);
   applyDiffColors();
+});
+// Dossier d'enregistrement : choisi une fois, proposé ensuite partout.
+const folderDialog = $<HTMLDialogElement>("#folder-dialog");
+function showFolder() {
+  const dir = saveFolder();
+  $("#folder-path").textContent = dir || "Aucun : le système propose le dernier dossier utilisé.";
+  $("#folder-path").classList.toggle("muted", !dir);
+  $<HTMLButtonElement>("#folder-reset").hidden = !dir;
+}
+function openFolderDialog() {
+  showFolder();
+  folderDialog.showModal();
+}
+$("#folder-choose").addEventListener("click", async () => {
+  const dir = await open({ directory: true, multiple: false, defaultPath: saveFolder() || undefined });
+  if (typeof dir !== "string") return;
+  prefs.set("saveFolder", dir);
+  showFolder();
+});
+$("#folder-reset").addEventListener("click", () => {
+  prefs.set("saveFolder", "");
+  showFolder();
 });
 $("#diff-prev").addEventListener("click", () => compare?.go(-1));
 $("#diff-next").addEventListener("click", () => compare?.go(1));

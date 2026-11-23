@@ -2640,4 +2640,36 @@ body.focus-mode #editor .tiptap :is(.comment-mark, .comment-active) {
 body.focus-mode .guide-bar,
 body.exporting .guide-bar {
   display: none;
+
+.folder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(460px, 80vw);
+}
+
+.folder-form .hint {
+  margin: 0;
+  font-size: 12px;
+}
+
+.folder-path {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--hover, rgba(0, 0, 0, 0.05));
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.folder-path.muted {
+  color: var(--muted);
+  word-break: normal;
+}
+
+.folder-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
 }
